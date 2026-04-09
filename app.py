@@ -15,40 +15,104 @@ st.markdown("""
     [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
     .main { background-color: #0f172a; color: #f8fafc; }
     .stMetric { background-color: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155; }
-    /* 상단 네비게이션 바 스타일 */
-    .nav-bar {
-        background-color: #1e293b;
-        padding: 15px 20px;
-        border-radius: 8px;
-        margin-bottom: 15px;
-        border: 1px solid #334155;
+    
+    /* 헤더 바 스타일 */
+    .header-bar {
+        background-color: #1a2942;
+        padding: 12px 20px;
+        border-radius: 0px;
+        border-bottom: 1px solid #334155;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
     }
-    .nav-title {
+    
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 30px;
+    }
+    
+    .header-title {
         color: #f8fafc;
         font-weight: bold;
-        font-size: 18px;
-        margin-bottom: 10px;
+        font-size: 14px;
+        margin: 0;
+        white-space: nowrap;
     }
+    
+    .header-nav {
+        display: flex;
+        gap: 15px;
+    }
+    
+    .header-time-filter {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        color: #94a3b8;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+    
+    /* 내비게이션 버튼 스타일 */
+    .nav-btn {
+        background-color: transparent;
+        border: none;
+        color: #94a3b8;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 4px 0;
+        white-space: nowrap;
+    }
+    
+    .nav-btn:hover {
+        color: #f8fafc;
+    }
+    
+    /* 시간 필터 버튼 스타일 */
+    .time-btn {
+        background-color: transparent;
+        border: 1px solid #334155;
+        color: #94a3b8;
+        font-size: 11px;
+        padding: 5px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    
+    .time-btn:hover {
+        border-color: #94a3b8;
+        color: #f8fafc;
+    }
+    
+    .time-btn.active {
+        border-color: #60a5fa;
+        color: #60a5fa;
+        background-color: rgba(96, 165, 250, 0.1);
+    }
+    
     /* 버튼 메뉴 스타일 */
     .stButton>button {
-        border: 1px solid #334155;
-        background-color: #0f172a;
+        border: none;
+        background-color: transparent;
         color: #94a3b8;
-        font-weight: bold;
-        font-size: 14px;
-        padding: 8px 16px;
-        border-radius: 6px;
+        font-weight: normal;
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 0px;
+        height: auto;
     }
     .stButton>button:hover { 
         color: #f8fafc;
-        background-color: #334155;
-    }
-    /* 시간 필터 스타일 */
-    .time-filter-label {
-        color: #94a3b8;
-        font-size: 12px;
-        font-weight: bold;
-        margin-bottom: 8px;
+        background-color: transparent;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -56,60 +120,49 @@ st.markdown("""
 # 2. 메뉴 상태 관리
 if 'menu' not in st.session_state:
     st.session_state.menu = "대시보드"
+if 'selected_period' not in st.session_state:
+    st.session_state.selected_period = "최근 24시간"
 
-# 3. 상단 네비게이션 바
-st.markdown('<div class="nav-bar">', unsafe_allow_html=True)
-st.markdown('<div class="nav-title">AhnLab EDR Analyzer</div>', unsafe_allow_html=True)
-m_col1, m_col2, m_col3, m_col4, m_col5, m_empty = st.columns([1,1,1,1,1,5])
-with m_col1:
-    if st.button("대시보드", use_container_width=True): st.session_state.menu = "대시보드"
-with m_col2:
-    if st.button("분석", use_container_width=True): st.session_state.menu = "분석"
-with m_col3:
-    if st.button("이벤트", use_container_width=True): st.session_state.menu = "이벤트"
-with m_col4:
-    if st.button("정책", use_container_width=True): st.session_state.menu = "정책"
-with m_col5:
-    if st.button("보고서", use_container_width=True): st.session_state.menu = "보고서"
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# 4. 시간별 조회 필터 - 상단바에 통합
-st.markdown("---")
-
-# 5. 대시보드 헤더 (시간 필터 + 현재 시간)
-header_col1, header_col2, header_col3, header_col4, header_col5, header_col6 = st.columns([2, 0.8, 0.8, 0.8, 0.8, 2])
-
-with header_col1:
-    st.markdown("### 대시보드")
-
-time_periods = ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"]
-if 'time_idx' not in st.session_state:
-    st.session_state.time_idx = 0
-
-with header_col2:
-    if st.button("최근 24시간", use_container_width=True, key="period_0"):
-        st.session_state.time_idx = 0
-        st.session_state.selected_period = "최근 24시간"
-        
-with header_col3:
-    if st.button("최근 7일", use_container_width=True, key="period_1"):
-        st.session_state.time_idx = 1
-        st.session_state.selected_period = "최근 7일"
-        
-with header_col4:
-    if st.button("최근 14일", use_container_width=True, key="period_2"):
-        st.session_state.time_idx = 2
-        st.session_state.selected_period = "최근 14일"
-        
-with header_col5:
-    if st.button("최근 30일", use_container_width=True, key="period_3"):
-        st.session_state.time_idx = 3
-        st.session_state.selected_period = "최근 30일"
-
-with header_col6:
-    current_time = datetime.datetime.now().strftime('%Y 년 %m 월 %d 일 %H:%M:%S')
-    st.markdown(f"<div style='text-align: right; padding-top: 10px;'><small>{current_time}</small></div>", unsafe_allow_html=True)
+# 3. 통합 헤더 바
+header_container = st.container()
+with header_container:
+    col_title, col_nav1, col_nav2, col_nav3, col_nav4, col_nav5, col_time1, col_time2, col_time3, col_time4, col_spacer, col_clock = st.columns([1.5, 0.8, 0.8, 0.8, 0.8, 0.8, 0.75, 0.75, 0.75, 0.75, 1, 1.5])
+    
+    with col_title:
+        st.markdown("<div style='padding: 8px 15px; text-align: left;'><b>EDR Project</b></div>", unsafe_allow_html=True)
+    
+    with col_nav1:
+        if st.button("🖥️ 대시보드", use_container_width=True, key="nav_dashboard"):
+            st.session_state.menu = "대시보드"
+    with col_nav2:
+        if st.button("🔍 분석", use_container_width=True, key="nav_analysis"):
+            st.session_state.menu = "분석"
+    with col_nav3:
+        if st.button("📋 이벤트", use_container_width=True, key="nav_event"):
+            st.session_state.menu = "이벤트"
+    with col_nav4:
+        if st.button("⚙️ 정책", use_container_width=True, key="nav_policy"):
+            st.session_state.menu = "정책"
+    with col_nav5:
+        if st.button("📊 보고서", use_container_width=True, key="nav_report"):
+            st.session_state.menu = "보고서"
+    
+    with col_time1:
+        if st.button("최근 24시간", use_container_width=True, key="period_0"):
+            st.session_state.selected_period = "최근 24시간"
+    with col_time2:
+        if st.button("최근 7일", use_container_width=True, key="period_1"):
+            st.session_state.selected_period = "최근 7일"
+    with col_time3:
+        if st.button("최근 14일", use_container_width=True, key="period_2"):
+            st.session_state.selected_period = "최근 14일"
+    with col_time4:
+        if st.button("최근 30일", use_container_width=True, key="period_3"):
+            st.session_state.selected_period = "최근 30일"
+    
+    with col_clock:
+        current_time = datetime.datetime.now().strftime('%Y 년 %m 월 %d 일\n%H:%M:%S')
+        st.markdown(f"<div style='text-align: right; font-size: 11px; color: #94a3b8; padding: 6px;'>{current_time}</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
