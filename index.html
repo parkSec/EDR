@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lorem Ipsum</title>
+    <title>AhnLab EDR Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * {
             margin: 0;
@@ -12,490 +13,671 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
             overflow-x: hidden;
-            background-color: #0a0e27;
-            color: #fff;
         }
 
-        /* Lorem Ipsum */
+        /* 네비게이션바 */
         nav {
             position: fixed;
             top: 0;
             width: 100%;
-            background: rgba(10, 14, 39, 0.95);
+            background-color: rgba(15, 23, 42, 0.95);
             backdrop-filter: blur(10px);
-            padding: 1.5rem 5%;
+            padding: 1rem 2rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
             z-index: 1000;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            border-bottom: 1px solid rgba(51, 65, 85, 0.3);
         }
 
         .logo {
-            font-size: 1.8rem;
+            font-size: 1.1rem;
             font-weight: 700;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
-        .nav-links {
+        .nav-menu {
             display: flex;
             gap: 2rem;
             list-style: none;
         }
 
-        .nav-links a {
-            color: #fff;
+        .nav-menu a {
+            color: #cbd5e1;
             text-decoration: none;
-            transition: all 0.3s ease;
-            position: relative;
-        }
-
-        .nav-links a::after {
-            content: '';
-            position: absolute;
-            bottom: -5px;
-            left: 0;
-            width: 0;
-            height: 2px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.3s ease;
-        }
-
-        .nav-links a:hover::after {
-            width: 100%;
-        }
-
-        /* Lorem Ipsum */
-        .background-animation {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: -1;
-            background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0f1628 100%);
-        }
-
-        .bubble {
-            position: absolute;
-            background: radial-gradient(circle at 30% 30%, rgba(102, 126, 234, 0.3), rgba(118, 75, 162, 0.1));
-            border-radius: 50%;
-            animation: float 15s infinite ease-in-out;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translate(0, 0); }
-            25% { transform: translate(30px, -30px); }
-            50% { transform: translate(-20px, 20px); }
-            75% { transform: translate(20px, 10px); }
-        }
-
-        /* Lorem Ipsum */
-        .hero {
-            min-height: 100vh;
+            font-size: 0.9rem;
             display: flex;
             align-items: center;
-            justify-content: center;
+            gap: 0.5rem;
+            transition: color 0.3s;
+        }
+
+        .nav-menu a:hover {
+            color: #f8fafc;
+        }
+
+        .nav-icons {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .icon-btn {
+            background: none;
+            border: none;
+            color: #cbd5e1;
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: color 0.3s;
+        }
+
+        .icon-btn:hover {
+            color: #f8fafc;
+        }
+
+        /* 메인 콘텐츠 */
+        .container {
+            margin-top: 60px;
+            padding: 2rem;
+            max-width: 1600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* 필터 바 */
+        .filter-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background-color: rgba(30, 41, 59, 0.5);
+            border-radius: 8px;
+            border: 1px solid rgba(51, 65, 85, 0.3);
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .filter-btn {
+            padding: 0.5rem 1rem;
+            background-color: transparent;
+            border: 1px solid rgba(59, 130, 246, 0.5);
+            color: #3b82f6;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.3s;
+        }
+
+        .filter-btn:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+            border-color: #3b82f6;
+        }
+
+        .filter-btn.active {
+            background-color: #3b82f6;
+            color: white;
+        }
+
+        .time-display {
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+
+        /* 그리드 레이아웃 */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background-color: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(51, 65, 85, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .metric-card {
             text-align: center;
-            padding-top: 100px;
+        }
+
+        .metric-number {
+            font-size: 3rem;
+            font-weight: 700;
+            color: #f8fafc;
+            margin: 1rem 0;
+        }
+
+        .metric-label {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-chart {
+            height: 80px;
+            margin: 1rem 0;
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.05));
+            border-radius: 5px;
             position: relative;
             overflow: hidden;
         }
 
-        .hero-content {
-            z-index: 10;
-            animation: slideInUp 0.8s ease-out;
+        .metric-chart::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #ef4444 0%, transparent 100%);
         }
 
-        .hero h1 {
-            font-size: 4.5rem;
-            font-weight: 800;
-            margin-bottom: 1rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            line-height: 1.1;
+        .metric-row {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(51, 65, 85, 0.3);
         }
 
-        .hero p {
-            font-size: 1.3rem;
-            color: #b0b8d4;
-            margin-bottom: 2rem;
-            font-weight: 300;
-        }
-
-        .cta-button {
-            display: inline-block;
-            padding: 1rem 2.5rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            border-radius: 50px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
-            margin: 0.5rem;
-        }
-
-        .cta-button:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 20px 50px rgba(102, 126, 234, 0.6);
-        }
-
-        .cta-button.secondary {
-            background: transparent;
-            border: 2px solid #667eea;
-        }
-
-        /* Lorem Ipsum */
-        section {
-            padding: 6rem 5%;
-            margin: 0 auto;
-            max-width: 1400px;
-        }
-
-        .section-title {
-            font-size: 3rem;
+        .metric-item {
             text-align: center;
-            margin-bottom: 3rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
         }
 
-        /* Lorem Ipsum */
-        .features {
-            background: rgba(26, 31, 58, 0.5);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 4rem;
-            margin: 2rem auto;
-        }
-
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-        }
-
-        .feature-card {
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
-            padding: 2rem;
-            border-radius: 15px;
-            border: 1px solid rgba(102, 126, 234, 0.2);
-            transition: all 0.3s ease;
-            cursor: pointer;
-        }
-
-        .feature-card:hover {
-            transform: translateY(-10px);
-            border-color: rgba(102, 126, 234, 0.5);
-            box-shadow: 0 20px 40px rgba(102, 126, 234, 0.2);
-        }
-
-        .feature-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .feature-card h3 {
+        .metric-item .number {
             font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-            color: #667eea;
+            font-weight: 700;
+            color: #f8fafc;
         }
 
-        .feature-card p {
-            color: #b0b8d4;
-            line-height: 1.6;
+        .metric-item .label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            margin-top: 0.25rem;
         }
 
-        /* Lorem Ipsum */
-        .about {
+        /* 테이블 */
+        .table-container {
+            grid-column: span 2;
+        }
+
+        .table-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #f8fafc;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th {
+            background-color: rgba(15, 23, 42, 0.5);
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+            color: #cbd5e1;
+        }
+
+        td {
+            padding: 0.75rem;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.2);
+        }
+
+        tr:hover {
+            background-color: rgba(59, 130, 246, 0.05);
+        }
+
+        .risk-high {
+            color: #f87171;
+            font-weight: 600;
+        }
+
+        .risk-medium {
+            color: #fbbf24;
+            font-weight: 600;
+        }
+
+        .risk-low {
+            color: #86efac;
+            font-weight: 600;
+        }
+
+        .status-new {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: #fca5a5;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        /* 차트 섹션 */
+        .charts-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 3rem;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+        }
+
+        .chart-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chart-card .card {
+            width: 100%;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
             align-items: center;
         }
 
-        .about-content h2 {
-            font-size: 2.5rem;
+        .chart-title {
+            font-size: 0.95rem;
+            font-weight: 600;
             margin-bottom: 1rem;
-            color: #fff;
-        }
-
-        .about-content p {
-            font-size: 1.1rem;
-            color: #b0b8d4;
-            margin-bottom: 1rem;
-            line-height: 1.8;
-        }
-
-        .about-image {
             width: 100%;
-            height: 400px;
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.3), rgba(118, 75, 162, 0.3));
-            border-radius: 20px;
+            text-align: left;
+            color: #f8fafc;
+        }
+
+        .donut-chart {
+            position: relative;
+            width: 150px;
+            height: 150px;
+        }
+
+        .chart-legend {
+            margin-top: 1rem;
+            width: 100%;
+            text-align: left;
+            font-size: 0.8rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin: 0.5rem 0;
+            color: #cbd5e1;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+
+        .legend-value {
+            margin-left: auto;
+            color: #f8fafc;
+            font-weight: 600;
+        }
+
+        /* 리스트 카드 */
+        .list-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.2);
+        }
+
+        .list-item:last-child {
+            border-bottom: none;
+        }
+
+        .item-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 5rem;
-            animation: bounce 3s infinite;
-        }
-
-        @keyframes bounce {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-20px); }
-        }
-
-        /* Lorem Ipsum */
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 2rem;
-            text-align: center;
-        }
-
-        .stat-item h3 {
-            font-size: 3rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.5rem;
-        }
-
-        .stat-item p {
-            color: #b0b8d4;
-        }
-
-        /* Lorem Ipsum */
-        .cta-section {
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
-            border-radius: 20px;
-            padding: 4rem;
-            text-align: center;
-            border: 1px solid rgba(102, 126, 234, 0.3);
-        }
-
-        .cta-section h2 {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .cta-section p {
             font-size: 1.2rem;
-            color: #b0b8d4;
-            margin-bottom: 2rem;
+            flex-shrink: 0;
         }
 
-        /* Lorem Ipsum */
-        footer {
-            background: rgba(10, 14, 39, 0.8);
-            padding: 2rem 5%;
-            text-align: center;
-            border-top: 1px solid rgba(102, 126, 234, 0.2);
-            color: #b0b8d4;
+        .item-content {
+            flex: 1;
         }
 
-        /* Lorem Ipsum */
-        @keyframes slideInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        .item-label {
+            font-size: 0.85rem;
+            color: #cbd5e1;
         }
 
-        .fade-in {
-            animation: fadeIn 0.8s ease-out;
+        .item-value {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #f8fafc;
+            margin-top: 0.25rem;
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        /* Lorem Ipsum */
-        @media (max-width: 768px) {
-            .hero h1 {
-                font-size: 2.5rem;
-            }
-
-            .nav-links {
-                gap: 1rem;
-            }
-
-            .about {
-                grid-template-columns: 1fr;
-            }
-
-            .stats {
+        @media (max-width: 1200px) {
+            .charts-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
 
-            .section-title {
-                font-size: 2rem;
+            .table-container {
+                grid-column: span 1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .nav-menu {
+                display: none;
             }
 
-            .hero {
-                padding-top: 80px;
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .table-container {
+                grid-column: span 1;
             }
         }
     </style>
 </head>
 <body>
-    <!-- Lorem Ipsum -->
-    <div class="background-animation">
-        <div class="bubble" style="width: 300px; height: 300px; top: 20%; left: 10%;"></div>
-        <div class="bubble" style="width: 200px; height: 200px; top: 60%; right: 15%;"></div>
-        <div class="bubble" style="width: 250px; height: 250px; bottom: 10%; left: 50%;"></div>
-    </div>
-
-    <!-- Lorem Ipsum -->
+    <!-- 네비게이션 -->
     <nav>
-        <div class="logo">✨ Lorem Ipsum</div>
-        <ul class="nav-links">
-            <li><a href="#home">Lorem Ipsum</a></li>
-            <li><a href="#about">Lorem Ipsum</a></li>
-            <li><a href="#features">Lorem Ipsum</a></li>
-            <li><a href="#contact">Lorem Ipsum</a></li>
+        <div class="logo">🛡️ AhnLab EDR Analyzer</div>
+        <ul class="nav-menu">
+            <li><a href="#">📊 대시보드</a></li>
+            <li><a href="#">🔍 분석</a></li>
+            <li><a href="#">⚠️ 이벤트</a></li>
+            <li><a href="#">⚙️ 정책</a></li>
+            <li><a href="#">📋 보고서</a></li>
         </ul>
+        <div class="nav-icons">
+            <button class="icon-btn">👤</button>
+            <button class="icon-btn">❓</button>
+        </div>
     </nav>
 
-    <!-- Lorem Ipsum -->
-    <section class="hero" id="home">
-        <div class="hero-content">
-            <h1>Lorem Ipsum</h1>
-            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit</p>
-            <div>
-                <a href="#" class="cta-button">Lorem Ipsum</a>
-                <a href="#" class="cta-button secondary">Lorem Ipsum</a>
+    <!-- 메인 콘텐츠 -->
+    <div class="container">
+        <!-- 필터 바 -->
+        <div class="filter-bar">
+            <div class="filter-buttons">
+                <button class="filter-btn active">최근 24시간</button>
+                <button class="filter-btn">최근 7일</button>
+                <button class="filter-btn">최근 14일</button>
+                <button class="filter-btn">최근 30일</button>
+            </div>
+            <div class="time-display">2025-11-04 17:43:58 (10초 대터)</div>
+        </div>
+
+        <!-- 대시보드 그리드 -->
+        <div class="dashboard-grid">
+            <!-- 위험 현황 -->
+            <div class="card metric-card">
+                <div class="metric-label">위험 현황</div>
+                <div class="metric-number">7</div>
+                <div class="metric-chart" style="height: 60px;"></div>
+                <div class="metric-row">
+                    <div class="metric-item">
+                        <div class="number">7</div>
+                        <div class="label">신규</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="number">0</div>
+                        <div class="label">확인</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="number">0</div>
+                        <div class="label">위협</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 최근 위협 위험 테이블 -->
+            <div class="card table-container">
+                <div class="table-title">최근 위협 위험</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>일자/시간</th>
+                            <th>위험도</th>
+                            <th>인식 위험</th>
+                            <th>단지 유형</th>
+                            <th>프로세스</th>
+                            <th>상태</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>2025-11-04 17:41:49</td>
+                            <td><span class="risk-high">H</span></td>
+                            <td>인식 중</td>
+                            <td><span style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe; padding: 0.25rem 0.5rem; border-radius: 3px; font-size: 0.75rem;">의심</span></td>
+                            <td>powershell.exe</td>
+                            <td><span class="status-new">신규</span></td>
+                        </tr>
+                        <tr>
+                            <td>2025-11-04 17:41:49</td>
+                            <td><span class="risk-high">L</span></td>
+                            <td>인식 중</td>
+                            <td><span style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe; padding: 0.25rem 0.5rem; border-radius: 3px; font-size: 0.75rem;">의심</span></td>
+                            <td>powershell.exe</td>
+                            <td><span class="status-new">신규</span></td>
+                        </tr>
+                        <tr>
+                            <td>2025-11-04 17:41:49</td>
+                            <td><span class="risk-high">L</span></td>
+                            <td>인식 중</td>
+                            <td><span style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe; padding: 0.25rem 0.5rem; border-radius: 3px; font-size: 0.75rem;">의심</span></td>
+                            <td>powershell.exe</td>
+                            <td><span class="status-new">신규</span></td>
+                        </tr>
+                        <tr>
+                            <td>2025-11-04 17:41:49</td>
+                            <td><span class="risk-high">L</span></td>
+                            <td>인식 중</td>
+                            <td><span style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe; padding: 0.25rem 0.5rem; border-radius: 3px; font-size: 0.75rem;">의심</span></td>
+                            <td>powershell.exe</td>
+                            <td><span class="status-new">신규</span></td>
+                        </tr>
+                        <tr>
+                            <td>2025-11-04 17:41:49</td>
+                            <td><span class="risk-high">L</span></td>
+                            <td>인식 중</td>
+                            <td><span style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe; padding: 0.25rem 0.5rem; border-radius: 3px; font-size: 0.75rem;">의심</span></td>
+                            <td>powershell.exe</td>
+                            <td><span class="status-new">신규</span></td>
+                        </tr>
+                        <tr>
+                            <td>2025-11-04 17:41:49</td>
+                            <td><span class="risk-high">L</span></td>
+                            <td>인식 중</td>
+                            <td><span style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe; padding: 0.25rem 0.5rem; border-radius: 3px; font-size: 0.75rem;">의심</span></td>
+                            <td>powershell.exe</td>
+                            <td><span class="status-new">신규</span></td>
+                        </tr>
+                        <tr>
+                            <td>2025-11-04 17:41:49</td>
+                            <td><span style="color: #ef4444;">H</span></td>
+                            <td>인식 중</td>
+                            <td><span style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe; padding: 0.25rem 0.5rem; border-radius: 3px; font-size: 0.75rem;">의심</span></td>
+                            <td>powershell.exe</td>
+                            <td><span class="status-new">신규</span></td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
-    </section>
 
-    <!-- Lorem Ipsum -->
-    <section class="about" id="about">
-        <div class="about-content">
-            <h2>Lorem Ipsum</h2>
-            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.</p>
-            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
-            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Utenim ad minim veniam, quis nostrud exercitation.</p>
+        <!-- 차트 섹션 -->
+        <div class="charts-grid">
+            <!-- 위협도별 위험 현황 -->
+            <div class="chart-card">
+                <div class="card">
+                    <div class="chart-title">위협도별 위험 현황</div>
+                    <svg viewBox="0 0 120 120" class="donut-chart">
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#fbbf24" stroke-width="20" stroke-dasharray="141.3714 471.24"
+                            transform="rotate(-90 60 60)"></circle>
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#ef4444" stroke-width="20" 
+                            stroke-dasharray="94.248 471.24" stroke-dashoffset="-141.3714"
+                            transform="rotate(-90 60 60)"></circle>
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#10b981" stroke-width="20" 
+                            stroke-dasharray="235.62 471.24" stroke-dashoffset="-235.6194"
+                            transform="rotate(-90 60 60)"></circle>
+                    </svg>
+                    <div class="chart-legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #fbbf24;"></div>
+                            <span>위험</span>
+                            <span class="legend-value">1 14.3%</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #ef4444;"></div>
+                            <span>높음</span>
+                            <span class="legend-value">0 0.0%</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #10b981;"></div>
+                            <span>낮음</span>
+                            <span class="legend-value">6 85.7%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 위협 유형별 위험 현황 -->
+            <div class="chart-card">
+                <div class="card">
+                    <div class="chart-title">위협 유형별 위험 현황</div>
+                    <svg viewBox="0 0 120 120" class="donut-chart">
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#a78bfa" stroke-width="20" stroke-dasharray="0 471.24"
+                            transform="rotate(-90 60 60)"></circle>
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#c084fc" stroke-width="20" 
+                            stroke-dasharray="329.868 471.24"
+                            transform="rotate(-90 60 60)"></circle>
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#e879f9" stroke-width="20" 
+                            stroke-dasharray="0 471.24" stroke-dashoffset="-329.868"
+                            transform="rotate(-90 60 60)"></circle>
+                    </svg>
+                    <div class="chart-legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #a78bfa;"></div>
+                            <span>...</span>
+                            <span class="legend-value">0 0.0%</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #c084fc;"></div>
+                            <span>...</span>
+                            <span class="legend-value">7 100.0%</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #e879f9;"></div>
+                            <span>...</span>
+                            <span class="legend-value">0 0.0%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 위험 관련 우인 경로 순위 -->
+            <div class="chart-card">
+                <div class="card">
+                    <div class="chart-title">위험 관련 우인 경로 순위</div>
+                    <div style="width: 100%;">
+                        <div class="list-item">
+                            <div class="item-icon" style="background-color: rgba(239, 88, 88, 0.2); color: #ff8080;">📁</div>
+                            <div class="item-content">
+                                <div class="item-label">네트워크(국문; 홈파)</div>
+                                <div class="item-value">0 0%</div>
+                            </div>
+                        </div>
+                        <div class="list-item">
+                            <div class="item-icon" style="background-color: rgba(59, 130, 246, 0.2); color: #60a5fa;">✉️</div>
+                            <div class="item-content">
+                                <div class="item-label">메일</div>
+                                <div class="item-value">0 0%</div>
+                            </div>
+                        </div>
+                        <div class="list-item">
+                            <div class="item-icon" style="background-color: rgba(34, 197, 94, 0.2); color: #4ade80;">💾</div>
+                            <div class="item-content">
+                                <div class="item-label">이동식 디스크(USB)</div>
+                                <div class="item-value">0 0%</div>
+                            </div>
+                        </div>
+                        <div class="list-item">
+                            <div class="item-icon" style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe;">📀</div>
+                            <div class="item-content">
+                                <div class="item-label">CD/DVD</div>
+                                <div class="item-value">0 0%</div>
+                            </div>
+                        </div>
+                        <div class="list-item">
+                            <div class="item-icon" style="background-color: rgba(59, 130, 246, 0.2); color: #60a5fa;">💻</div>
+                            <div class="item-content">
+                                <div class="item-label">롬 드라이브(E|home/MV~</div>
+                                <div class="item-value">0 0%</div>
+                            </div>
+                        </div>
+                        <div class="list-item">
+                            <div class="item-icon" style="background-color: rgba(168, 85, 247, 0.2); color: #d8b4fe;">🔐</div>
+                            <div class="item-content">
+                                <div class="item-label">기타</div>
+                                <div class="item-value">0 0%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="about-image">🚀</div>
-    </section>
-
-    <!-- Lorem Ipsum -->
-    <section>
-        <h2 class="section-title">Lorem Ipsum</h2>
-        <div class="stats">
-            <div class="stat-item">
-                <h3>10K+</h3>
-                <p>Lorem Ipsum</p>
-            </div>
-            <div class="stat-item">
-                <h3>100</h3>
-                <p>Lorem Ipsum</p>
-            </div>
-            <div class="stat-item">
-                <h3>50K+</h3>
-                <p>Lorem Ipsum</p>
-            </div>
-            <div class="stat-item">
-                <h3>24/7</h3>
-                <p>Lorem Ipsum</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Lorem Ipsum -->
-    <section class="features" id="features">
-        <h2 class="section-title">Lorem Ipsum</h2>
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">⚡</div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔒</div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🎨</div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🌍</div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">📊</div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔧</div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Lorem Ipsum -->
-    <section>
-        <div class="cta-section">
-            <h2>Lorem Ipsum</h2>
-            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit</p>
-            <a href="#" class="cta-button">Lorem Ipsum</a>
-        </div>
-    </section>
-
-    <!-- Lorem Ipsum -->
-    <footer>
-        <p>&copy; 2024 Lorem Ipsum. All Rights Reserved. | <a href="#" style="color: #667eea; text-decoration: none;">Lorem Ipsum</a></p>
-    </footer>
+    </div>
 
     <script>
-        // Lorem Ipsum
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                }
+        // 필터 버튼 이벤트
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
             });
         });
 
-        // Lorem Ipsum
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.classList.add('fade-in');
-                }
-            });
-        });
+        // 시간 업데이트
+        function updateTime() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const date = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            document.querySelector('.time-display').textContent = 
+                `${year}-${month}-${date} ${hours}:${minutes}:${seconds}`;
+        }
 
-        document.querySelectorAll('.feature-card, .stat-item').forEach(el => {
-            observer.observe(el);
-        });
+        updateTime();
+        setInterval(updateTime, 1000);
     </script>
 </body>
 </html>
