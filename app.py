@@ -54,17 +54,19 @@ if st.session_state.menu == "대시보드":
     st.write("")  # 5픽셀 간격
     
     # 조회 범위 호버 메뉴 (세그먼트 버튼)
+    if 'time_filter' not in st.session_state:
+        st.session_state.time_filter = "최근 24시간"
+    
     with st.popover("🔽 조회 범위"):
-        if 'time_filter' not in st.session_state:
-            st.session_state.time_filter = "최근 24시간"
+        col1, col2, col3, col4 = st.columns(4)
+        filters = ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"]
+        cols = [col1, col2, col3, col4]
         
-        st.session_state.time_filter = st.radio(
-            "선택",
-            ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"],
-            index=["최근 24시간", "최근 7일", "최근 14일", "최근 30일"].index(st.session_state.time_filter),
-            label_visibility="collapsed",
-            horizontal=True
-        )
+        for col, filter_opt in zip(cols, filters):
+            with col:
+                if st.button(filter_opt, use_container_width=True, key=f"filter_{filter_opt}"):
+                    st.session_state.time_filter = filter_opt
+                    st.rerun()
 
     # 5. 핵심 현황 지표
     m1, m2, m3, m4 = st.columns(4)
