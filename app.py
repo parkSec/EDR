@@ -104,7 +104,7 @@ else:
         st.session_state.menu = "대시보드"
         st.rerun()
 
-# 7. 사이드바
+# 7. 사이드바s
 with st.sidebar:
     st.markdown("### EDR Analyzer")
     st.write(f"접속: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
