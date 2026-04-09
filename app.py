@@ -99,3 +99,5 @@ with right_content:
 # 6. 하단 푸터
 st.write("---")
 st.caption("© 2026 EDR Project Team. All rights reserved. 본 대시보드는 모니터링 목적으로만 사용됩니다.")
+
+#커밋 다시 업뎃
