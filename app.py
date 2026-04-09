@@ -2,84 +2,124 @@ import streamlit as st
 import pandas as pd
 import datetime
 
-# 1. 페이지 설정 (넓은 화면 유지)
+
+# 1. 페이지 설정 및 보안 UI 최적화
 st.set_page_config(
-    page_title="EDR Dashboard v2",
-    page_icon="🟢",
+    page_title="AhnLab Style EDR Analyzer",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 커스텀 CSS: 확 바뀐 느낌을 주기 위해 '해커/터미널(Neon Green)' 테마로 전면 수정!
+# ✂️ 스트림릿 흔적 지우기 및 AhnLab 스타일 커스텀 CSS
 st.markdown("""
     <style>
-    .main { background-color: #000000; font-family: 'Courier New', Courier, monospace; }
-    h1, h2, h3, h4, p, div, span, label { color: #00FF00 !important; }
-    .stMetric { background-color: #0a0a0a; padding: 15px; border-radius: 0px; border: 1px dashed #00FF00; }
-    .stSidebar { background-color: #050505; border-right: 2px solid #00FF00; }
-    hr { border-color: #00FF00; }
-    .stButton>button { background-color: #000000; color: #00FF00; border: 1px solid #00FF00; border-radius: 0px; }
-    .stButton>button:hover { background-color: #00FF00; color: #000000; }
-    div[data-testid="stDataFrame"] { border: 1px solid #00FF00; }
+    /* 기본 UI 숨기기 */
+    [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
+    
+    /* 배경 및 폰트 설정 */
+    .main { background-color: #0f172a; color: #f8fafc; }
+    .stMetric { 
+        background-color: #1e293b; 
+        padding: 20px; 
+        border-radius: 12px; 
+        border: 1px solid #334155;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    /* 사이드바 스타일 */
+    .css-1d391kg { background-color: #020617; }
+    
+    /* 테이블 스타일 커스텀 */
+    div[data-testid="stDataFrame"] {
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #334155;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. 헤더 영역 (사이버 터미널 느낌)
-st.title("🟢 [ SYSTEM_ROOT_ACCESS ] :: EDR_ANALYZER_v2")
-st.markdown("> 터미널 접속 | 네트워크 분석 | 방화벽 로그 | 시스템 설정")
+# 2. 사이드바 (시스템 상태 및 설정)
+with st.sidebar:
+    st.image("https://img.icons8.com/fluency/96/shield.png", width=80)
+    st.title("EDR Control Center")
+    st.info(f"📍 **환경:** Windows Home\n\n📅 **접속 시간:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    st.write("---")
+    st.subheader("🛠️ 시스템 설정")
+    monitor_on = st.toggle("실시간 모니터링 활성화", value=True)
+    ai_on = st.toggle("AI 분석 자동화", value=True)
+    st.write("---")
+    st.caption("v1.2.0-Beta (Project 2026)")
 
-# 3. 상단 대시보드 컨트롤
-col1, col2 = st.columns([8, 2])
-with col1:
-    st.write(f"시스템 접속 시각: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-with col2:
-    if st.button("REBOOT_SYSTEM [새로고침]", use_container_width=True):
-        st.rerun()
+# 3. 메인 헤더 영역
+col_title, col_status = st.columns([7, 3])
+with col_title:
+    st.markdown("# 🛡️ Enterprise Endpoint Detection & Response")
+with col_status:
+    st.write("") # 간격 맞춤
+    st.success("✅ 시스템 정상 가동 중 (Active)")
 
-st.write("---") 
+# 4. 상단 핵심 요약 (Summary 카드)
+st.write("")
+m1, m2, m3, m4 = st.columns(4)
+with m1:
+    st.metric(label="탐지된 총 위협", value="12", delta="2 New", delta_color="inverse")
+with m2:
+    st.metric(label="VirusTotal 탐지", value="5", delta="Clean", delta_color="normal")
+with m3:
+    st.metric(label="AI (Ember) 위험도", value="High", delta="주의 요망", delta_color="inverse")
+with m4:
+    st.metric(label="보호 중인 자산", value="1", delta="Local Host")
 
-# 4. 상단 핵심 지표 (Metrics) - 기능(값)은 동일하게 유지
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-with m_col1:
-    st.metric(label="탐지된 총 위협", value="12", delta="CRITICAL")
-with m_col2:
-    st.metric(label="VirusTotal 탐지", value="5")
-with m_col3:
-    st.metric(label="AI(Ember) 위험도", value="High")
-with m_col4:
-    st.metric(label="보호 중인 자산", value="1")
-
-st.write("---") 
-
-# 5. 메인 레이아웃 
-left_content, right_content = st.columns([6.5, 3.5])
-
-with left_content:
-    st.subheader(">> SYSMON_REALTIME_LOGS.exe")
-    mock_logs = pd.DataFrame([
-        {"TIME": "20:15:21", "EVENT": "프로세스 생성", "LEVEL": "Low", "DETAILS": "explorer.exe 실행"},
-        {"TIME": "20:18:44", "EVENT": "네트워크 접속", "LEVEL": "Medium", "DETAILS": "45.122.x.x 접속 시도"},
-        {"TIME": "20:22:12", "EVENT": "악성코드 의심", "LEVEL": "CRITICAL", "DETAILS": "unknown_payload.exe 탐지"},
-    ])
-    st.dataframe(mock_logs, use_container_width=True, hide_index=True)
-
-with right_content:
-    st.subheader(">> AI_THREAT_ANALYSIS")
-    
-    with st.expander("[+] unknown_payload.exe (PID: 9924)", expanded=True):
-        st.progress(85, text="AI_MALWARE_PROBABILITY: 85%")
-        st.write("[!] VirusTotal MATCH: **42/70**")
-        st.write("[-] BEHAVIOR: Registry Key Modified")
-    
-    st.write("---") 
-    
-    st.subheader(">> COUNTERMEASURE_EXECUTION")
-    
-    action = st.selectbox("Select Action Protocol:", ["NETWORK_ISOLATION", "KILL_PROCESS", "DEEP_SCAN"])
-    
-    if st.button("EXECUTE_COMMAND", use_container_width=True):
-        st.warning(f"COMMAND [{action}] INITIATED. (Awaiting API Implementation...)")
-
-# 6. 하단 푸터
 st.write("---")
-st.caption("CONNECTION SECURE. PROJECT 2026 EDR TEAM.")
+
+# 5. 메인 대시보드 (로그 현황 & 심층 분석)
+left_col, right_col = st.columns([6, 4])
+
+with left_col:
+    st.subheader("📊 실시간 보안 이벤트 현황 (Sysmon)")
+    
+    # 가짜 로그 데이터 (실제 데이터 연동 시 이 변수를 교체)
+    log_data = pd.DataFrame([
+        {"시간": "20:15:21", "이벤트": "프로세스 생성", "위험도": "Low", "내용": "explorer.exe 실행"},
+        {"시간": "20:18:44", "이벤트": "네트워크 접속", "위험도": "Medium", "내용": "45.122.x.x 접속 시도"},
+        {"시간": "20:22:12", "이벤트": "악성코드 의심", "위험도": "Critical", "내용": "unknown_payload.exe 탐지"},
+        {"시간": "20:25:05", "이벤트": "파일 변경", "위험도": "Low", "내용": "config.ini 수정됨"},
+    ])
+    
+    # 위험도별 색상 강조를 위한 데이터프레임 출력
+    st.dataframe(log_data, use_container_width=True, hide_index=True)
+    
+    # 탐지 유형별 통계 (간단한 차트)
+    st.write("")
+    st.subheader("📈 위험 탐지 추이")
+    chart_data = pd.DataFrame({
+        'Day': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        'Threats': [2, 5, 3, 8, 12, 4, 2]
+    })
+    st.line_chart(chart_data.set_index('Day'))
+
+with right_col:
+    st.subheader("🧪 심층 분석 및 대응")
+    
+    # VirusTotal & AI 분석 결과 섹션
+    with st.container(border=True):
+        st.markdown("🔍 **VirusTotal & AI 분석 결과**")
+        st.write("**파일명:** `unknown_payload.exe` (PID: 9924)")
+        
+        # AI 확률 게이지
+        st.write("AI 악성 확률: 85%")
+        st.progress(85)
+        
+        # VirusTotal 결과 (나중에 API 연결)
+        st.markdown("✅ **VirusTotal:** 42/70 탐지")
+        
+        st.write("---")
+        st.markdown("⚡ **즉각 대응 조치**")
+        action = st.radio("실행할 액션 선택:", ["로그만 기록", "프로세스 즉시 종료", "네트워크 격리"], index=1)
+        
+        if st.button("조치 실행 (Apply)", use_container_width=True):
+            st.error(f"경고: {action} 조치가 즉시 실행되었습니다!")
+
+# 6. 푸터
+st.write("---")
+st.caption("AhnLab EDR Analyzer 스타일 프레임워크 v1.2 | 보안 담당자 전용")
