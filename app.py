@@ -31,8 +31,8 @@ st.markdown("""
 if 'menu' not in st.session_state:
     st.session_state.menu = "대시보드"
 
-# 3. 상단 메뉴바 (텍스트 중심)
-m_col1, m_col2, m_col3, m_col4, m_col5, m_empty = st.columns([1,1,1,1,1,5])
+# 3. 상단 메뉴바 (텍스트 중심, 가운데 정렬)
+m_empty1, m_col1, m_col2, m_col3, m_col4, m_col5, m_empty2 = st.columns([1.5,1,1,1,1,1,1.5])
 with m_col1:
     if st.button("대시보드"): st.session_state.menu = "대시보드"
 with m_col2:
@@ -50,14 +50,20 @@ st.markdown("---")
 if st.session_state.menu == "대시보드":
     
     # 4. 상단 컨트롤 (텍스트 위주)
-    t_col1, t_col2 = st.columns([7, 3])
-    with t_col1:
-        st.markdown(f"## {st.session_state.menu}")
-    with t_col2:
-        time_filter = st.selectbox(
-            "조회 범위", 
-            ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"], 
-            label_visibility="collapsed"
+    st.markdown(f"## {st.session_state.menu}")
+    st.write("")  # 5픽셀 간격
+    
+    # 조회 범위 호버 메뉴 (세그먼트 버튼)
+    with st.popover("🔽 조회 범위"):
+        if 'time_filter' not in st.session_state:
+            st.session_state.time_filter = "최근 24시간"
+        
+        st.session_state.time_filter = st.radio(
+            "선택",
+            ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"],
+            index=["최근 24시간", "최근 7일", "최근 14일", "최근 30일"].index(st.session_state.time_filter),
+            label_visibility="collapsed",
+            horizontal=True
         )
 
     # 5. 핵심 현황 지표
