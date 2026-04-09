@@ -107,6 +107,6 @@ else:
 # 7. 사이드바
 with st.sidebar:
     st.markdown("### EDR Analyzer")
-    st.write(f"접속: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    st.write(f"접속: {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}")
     st.write("---")
     st.caption("v1.2.0 | Enterprise Mode")
