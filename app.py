@@ -123,65 +123,178 @@ if 'menu' not in st.session_state:
 if 'selected_period' not in st.session_state:
     st.session_state.selected_period = "최근 24시간"
 
-# 3. 헤더 - 첫 번째 행
-st.markdown('<div style="background-color: #1a2942; padding: 10px 20px; margin: -20px -20px 0 -20px; border-bottom: 1px solid #334155;">', unsafe_allow_html=True)
+# --- [1, 2번 설정 코드는 유지합니다] ---
 
-header_row1 = st.columns([1, 4, 1.5])
-
-# 좌측: 데이터셋 설정 드롭다운
-with header_row1[0]:
-    st.markdown('<div style="padding: 8px 0;"><small>🖥️ 데이터셋 설정 ▼</small></div>', unsafe_allow_html=True)
-
-# 중앙: 타이틀 및 메뉴 아이콘
-with header_row1[1]:
-    st.markdown('<div style="text-align: center; padding: 8px 0;"><b style="font-size: 14px;">AhnLab EDR Analyzer</b></div>', unsafe_allow_html=True)
-
-# 우측: 시간 + 드롭다운 + 사용자
-with header_row1[2]:
-    right_cols = st.columns([2, 0.4, 0.4])
-    with right_cols[0]:
-        current_time = datetime.datetime.now().strftime('%Y %m %d %H:%M:%S')
-        st.markdown(f'<div style="text-align: right; font-size: 11px; color: #94a3b8;">10초 터터</div><div style="text-align: right; font-size: 11px; color: #94a3b8;">{current_time}</div>', unsafe_allow_html=True)
-    with right_cols[1]:
-        st.markdown('<div style="text-align: center; padding: 8px 0; font-size: 18px;">▼</div>', unsafe_allow_html=True)
-    with right_cols[2]:
-        st.markdown('<div style="text-align: center; padding: 4px 8px; background-color: #334155; border-radius: 50%; width: 30px; height: 30px; line-height: 22px; color: #60a5fa; font-weight: bold; font-size: 14px;">K</div>', unsafe_allow_html=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# 4. 헤더 - 두 번째 행
-st.markdown('<div style="background-color: #1a2942; padding: 12px 20px; margin: 0 -20px 15px -20px; border-bottom: 1px solid #334155;">', unsafe_allow_html=True)
-
-header_row2 = st.columns([1, 3, 1.5])
-
-# 좌측: 데이터셋 설정 드롭다운
-with header_row2[0]:
-    st.markdown('<div style="padding: 8px 0;"><small>🖥️ 데이터셋 설정 ▼</small></div>', unsafe_allow_html=True)
-
-# 중앙: 시간별 필터
-with header_row2[1]:
-    time_cols = st.columns(4)
-    periods = ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"]
+# 기존 스타일 정의 아래에 이어서 적용하거나 덮어씌워주세요.
+st.markdown("""
+    <style>
+    /* 상단 여백을 완전히 제거하여 화면 끝에 붙임 */
+    .block-container {
+        padding-top: 0rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+        max-width: 100% !important;
+    }
     
-    with time_cols[0]:
-        if st.button(periods[0], use_container_width=True, key="period_0"):
-            st.session_state.selected_period = periods[0]
-    with time_cols[1]:
-        if st.button(periods[1], use_container_width=True, key="period_1"):
-            st.session_state.selected_period = periods[1]
-    with time_cols[2]:
-        if st.button(periods[2], use_container_width=True, key="period_2"):
-            st.session_state.selected_period = periods[2]
-    with time_cols[3]:
-        if st.button(periods[3], use_container_width=True, key="period_3"):
-            st.session_state.selected_period = periods[3]
+    /* 커스텀 헤더 전체 영역 */
+    .custom-header-container {
+        margin: 0 -2rem 2rem -2rem; /* 좌우 여백 상쇄 및 하단 여백 추가 */
+    }
 
-# 우측: 현재 시간
-with header_row2[2]:
-    current_time = datetime.datetime.now().strftime('%Y %m %d %H:%M:%S')
-    st.markdown(f'<div style="text-align: right; font-size: 11px; color: #94a3b8; padding: 8px 0;">{current_time}</div>', unsafe_allow_html=True)
+    /* 1열: 메인 네비게이션 */
+    .top-nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 30px;
+        background-color: #21293c; /* AhnLab 테마 메인 네이비 색상 */
+        border-bottom: 1px solid #2d3748;
+    }
+    
+    .nav-left { display: flex; align-items: center; gap: 50px; }
+    
+    .logo {
+        color: #ffffff;
+        font-size: 19px;
+        font-weight: bold;
+        font-family: 'Arial', sans-serif;
+    }
+    
+    .menu-items { display: flex; gap: 35px; font-size: 14px; }
+    
+    .menu-item {
+        color: #8b95a5;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-weight: 500;
+    }
+    
+    .menu-item.active {
+        color: #60a5fa; /* 활성화된 메뉴 텍스트 색상 */
+        font-weight: bold;
+    }
+    
+    .nav-right { display: flex; gap: 12px; align-items: center; }
+    
+    .profile-icon {
+        width: 32px; height: 32px;
+        background-color: #60a5fa; color: white;
+        border-radius: 50%; display: flex;
+        justify-content: center; align-items: center;
+        font-weight: bold; font-size: 14px;
+    }
+    
+    .help-icon {
+        width: 32px; height: 32px;
+        background-color: #3b455b; color: #a0aec0;
+        border-radius: 50%; display: flex;
+        justify-content: center; align-items: center;
+        font-weight: bold; font-size: 14px;
+    }
 
-st.markdown('</div>', unsafe_allow_html=True)
+    /* 2열: 서브 네비게이션 (시간 필터 등) */
+    .sub-nav {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 12px 30px;
+        background-color: #21293c;
+        border-bottom: 1px solid #2d3748;
+    }
+    
+    .dashboard-setting {
+        color: #8b95a5; font-size: 13px;
+        display: flex; align-items: center; gap: 8px;
+    }
+    
+    .time-filter-group {
+        display: flex;
+        background-color: #171d2b; /* 둥근 배경색 */
+        border-radius: 20px;
+        padding: 4px;
+    }
+    
+    .time-btn {
+        color: #8b95a5; font-size: 13px;
+        padding: 6px 20px; border-radius: 16px;
+    }
+    
+    .time-btn.active {
+        background-color: #2b3b5c; color: #60a5fa; /* 활성화된 버튼 배경/글자 */
+    }
+    
+    .status-info {
+        color: #8b95a5; font-size: 13px;
+        display: flex; align-items: center; gap: 12px;
+    }
+    
+    .refresh-btn {
+        background-color: #3182f6; color: white;
+        border-radius: 50%; width: 24px; height: 24px;
+        display: flex; justify-content: center; align-items: center;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 3 & 4. 상단바 렌더링 (HTML 기반 병합) ---
+current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+st.markdown(f"""
+    <div class="custom-header-container">
+        <div class="top-nav">
+            <div class="nav-left">
+                <div class="logo">AhnLab EDR Analyzer</div>
+                <div class="menu-items">
+                    <div class="menu-item active">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+                        대시보드
+                    </div>
+                    <div class="menu-item">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line></svg>
+                        분석
+                    </div>
+                    <div class="menu-item">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line></svg>
+                        이벤트
+                    </div>
+                    <div class="menu-item">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                        정책 ↗
+                    </div>
+                    <div class="menu-item">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>
+                        보고서 ↗
+                    </div>
+                </div>
+            </div>
+            <div class="nav-right">
+                <div class="profile-icon">K</div>
+                <div class="help-icon">?</div>
+            </div>
+        </div>
+
+        <div class="sub-nav">
+            <div class="dashboard-setting">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                대시보드 설정 ⌄
+            </div>
+            <div class="time-filter-group">
+                <div class="time-btn active">최근 24시간</div>
+                <div class="time-btn">최근 7일</div>
+                <div class="time-btn">최근 14일</div>
+                <div class="time-btn">최근 30일</div>
+            </div>
+            <div class="status-info">
+                {current_time} &nbsp;&nbsp; 10초 마다 ⌄
+                <div class="refresh-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+                </div>
+            </div>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
+
+# --- [이후 메인 대시보드 코드를 그대로 유지하세요] ---
 
 # --- [메인 대시보드] ---
 if st.session_state.menu == "대시보드":
