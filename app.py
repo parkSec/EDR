@@ -74,39 +74,51 @@ with m_col5:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 4. 시간별 조회 필터
-st.markdown('<div class="time-filter-label">조회 범위</div>', unsafe_allow_html=True)
-t_col1, t_col2, t_col3, t_col4, t_empty = st.columns([1,1,1,1,5])
-time_periods = ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"]
-selected_period = None
-with t_col1:
-    if st.button("최근 24시간", use_container_width=True):
-        selected_period = "최근 24시간"
-with t_col2:
-    if st.button("최근 7일", use_container_width=True):
-        selected_period = "최근 7일"
-with t_col3:
-    if st.button("최근 14일", use_container_width=True):
-        selected_period = "최근 14일"
-with t_col4:
-    if st.button("최근 30일", use_container_width=True):
-        selected_period = "최근 30일"
+# 4. 시간별 조회 필터 - 상단바에 통합
+st.markdown("---")
 
-if 'selected_period' not in st.session_state:
-    st.session_state.selected_period = "최근 24시간"
-if selected_period:
-    st.session_state.selected_period = selected_period
+# 5. 대시보드 헤더 (시간 필터 + 현재 시간)
+header_col1, header_col2, header_col3, header_col4, header_col5, header_col6 = st.columns([2, 0.8, 0.8, 0.8, 0.8, 2])
+
+with header_col1:
+    st.markdown("### 대시보드")
+
+time_periods = ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"]
+if 'time_idx' not in st.session_state:
+    st.session_state.time_idx = 0
+
+with header_col2:
+    if st.button("최근 24시간", use_container_width=True, key="period_0"):
+        st.session_state.time_idx = 0
+        st.session_state.selected_period = "최근 24시간"
+        
+with header_col3:
+    if st.button("최근 7일", use_container_width=True, key="period_1"):
+        st.session_state.time_idx = 1
+        st.session_state.selected_period = "최근 7일"
+        
+with header_col4:
+    if st.button("최근 14일", use_container_width=True, key="period_2"):
+        st.session_state.time_idx = 2
+        st.session_state.selected_period = "최근 14일"
+        
+with header_col5:
+    if st.button("최근 30일", use_container_width=True, key="period_3"):
+        st.session_state.time_idx = 3
+        st.session_state.selected_period = "최근 30일"
+
+with header_col6:
+    current_time = datetime.datetime.now().strftime('%Y 년 %m 월 %d 일 %H:%M:%S')
+    st.markdown(f"<div style='text-align: right; padding-top: 10px;'><small>{current_time}</small></div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
 # --- [메인 대시보드] ---
 if st.session_state.menu == "대시보드":
     
-    st.markdown(f"## {st.session_state.menu}")
-    st.markdown(f"**선택된 기간: {st.session_state.selected_period}**")
     st.write("")
 
-    # 5. 핵심 현황 지표
+    # 핵심 현황 지표
     st.markdown("### 위험 현황")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("위험 현황", "7", "신규 7")
