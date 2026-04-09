@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import datetime
+import datetime as dt
 
 # 1. 페이지 설정
 st.set_page_config(
