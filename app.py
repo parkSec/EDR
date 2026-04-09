@@ -123,48 +123,65 @@ if 'menu' not in st.session_state:
 if 'selected_period' not in st.session_state:
     st.session_state.selected_period = "최근 24시간"
 
-# 3. 통합 헤더 바
-header_container = st.container()
-with header_container:
-    col_title, col_nav1, col_nav2, col_nav3, col_nav4, col_nav5, col_time1, col_time2, col_time3, col_time4, col_spacer, col_clock = st.columns([1.5, 0.8, 0.8, 0.8, 0.8, 0.8, 0.75, 0.75, 0.75, 0.75, 1, 1.5])
-    
-    with col_title:
-        st.markdown("<div style='padding: 8px 15px; text-align: left;'><b>EDR Project</b></div>", unsafe_allow_html=True)
-    
-    with col_nav1:
-        if st.button("🖥️ 대시보드", use_container_width=True, key="nav_dashboard"):
-            st.session_state.menu = "대시보드"
-    with col_nav2:
-        if st.button("🔍 분석", use_container_width=True, key="nav_analysis"):
-            st.session_state.menu = "분석"
-    with col_nav3:
-        if st.button("📋 이벤트", use_container_width=True, key="nav_event"):
-            st.session_state.menu = "이벤트"
-    with col_nav4:
-        if st.button("⚙️ 정책", use_container_width=True, key="nav_policy"):
-            st.session_state.menu = "정책"
-    with col_nav5:
-        if st.button("📊 보고서", use_container_width=True, key="nav_report"):
-            st.session_state.menu = "보고서"
-    
-    with col_time1:
-        if st.button("최근 24시간", use_container_width=True, key="period_0"):
-            st.session_state.selected_period = "최근 24시간"
-    with col_time2:
-        if st.button("최근 7일", use_container_width=True, key="period_1"):
-            st.session_state.selected_period = "최근 7일"
-    with col_time3:
-        if st.button("최근 14일", use_container_width=True, key="period_2"):
-            st.session_state.selected_period = "최근 14일"
-    with col_time4:
-        if st.button("최근 30일", use_container_width=True, key="period_3"):
-            st.session_state.selected_period = "최근 30일"
-    
-    with col_clock:
-        current_time = datetime.datetime.now().strftime('%Y 년 %m 월 %d 일\n%H:%M:%S')
-        st.markdown(f"<div style='text-align: right; font-size: 11px; color: #94a3b8; padding: 6px;'>{current_time}</div>", unsafe_allow_html=True)
+# 3. 헤더 - 첫 번째 행
+st.markdown('<div style="background-color: #1a2942; padding: 10px 20px; margin: -20px -20px 0 -20px; border-bottom: 1px solid #334155;">', unsafe_allow_html=True)
 
-st.markdown("---")
+header_row1 = st.columns([1, 4, 1.5])
+
+# 좌측: 데이터셋 설정 드롭다운
+with header_row1[0]:
+    st.markdown('<div style="padding: 8px 0;"><small>🖥️ 데이터셋 설정 ▼</small></div>', unsafe_allow_html=True)
+
+# 중앙: 타이틀 및 메뉴 아이콘
+with header_row1[1]:
+    st.markdown('<div style="text-align: center; padding: 8px 0;"><b style="font-size: 14px;">AhnLab EDR Analyzer</b></div>', unsafe_allow_html=True)
+
+# 우측: 시간 + 드롭다운 + 사용자
+with header_row1[2]:
+    right_cols = st.columns([2, 0.4, 0.4])
+    with right_cols[0]:
+        current_time = datetime.datetime.now().strftime('%Y %m %d %H:%M:%S')
+        st.markdown(f'<div style="text-align: right; font-size: 11px; color: #94a3b8;">10초 터터</div><div style="text-align: right; font-size: 11px; color: #94a3b8;">{current_time}</div>', unsafe_allow_html=True)
+    with right_cols[1]:
+        st.markdown('<div style="text-align: center; padding: 8px 0; font-size: 18px;">▼</div>', unsafe_allow_html=True)
+    with right_cols[2]:
+        st.markdown('<div style="text-align: center; padding: 4px 8px; background-color: #334155; border-radius: 50%; width: 30px; height: 30px; line-height: 22px; color: #60a5fa; font-weight: bold; font-size: 14px;">K</div>', unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# 4. 헤더 - 두 번째 행
+st.markdown('<div style="background-color: #1a2942; padding: 12px 20px; margin: 0 -20px 15px -20px; border-bottom: 1px solid #334155;">', unsafe_allow_html=True)
+
+header_row2 = st.columns([1, 3, 1.5])
+
+# 좌측: 데이터셋 설정 드롭다운
+with header_row2[0]:
+    st.markdown('<div style="padding: 8px 0;"><small>🖥️ 데이터셋 설정 ▼</small></div>', unsafe_allow_html=True)
+
+# 중앙: 시간별 필터
+with header_row2[1]:
+    time_cols = st.columns(4)
+    periods = ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"]
+    
+    with time_cols[0]:
+        if st.button(periods[0], use_container_width=True, key="period_0"):
+            st.session_state.selected_period = periods[0]
+    with time_cols[1]:
+        if st.button(periods[1], use_container_width=True, key="period_1"):
+            st.session_state.selected_period = periods[1]
+    with time_cols[2]:
+        if st.button(periods[2], use_container_width=True, key="period_2"):
+            st.session_state.selected_period = periods[2]
+    with time_cols[3]:
+        if st.button(periods[3], use_container_width=True, key="period_3"):
+            st.session_state.selected_period = periods[3]
+
+# 우측: 현재 시간
+with header_row2[2]:
+    current_time = datetime.datetime.now().strftime('%Y %m %d %H:%M:%S')
+    st.markdown(f'<div style="text-align: right; font-size: 11px; color: #94a3b8; padding: 8px 0;">{current_time}</div>', unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # --- [메인 대시보드] ---
 if st.session_state.menu == "대시보드":
