@@ -5,7 +5,7 @@ import hashlib
 import requests
 import base64
 import time
-import datetime
+import datetime  # 시계 기능을 위한 부품 완벽 추가!
 
 # ------------------------------------------------------------------
 # 1. 백엔드: 바이러스 토탈 API '진짜 검사' 엔진 (상세 결과 포함)
@@ -61,7 +61,7 @@ def analyze_url_vt(target_url):
 def wait_for_analysis(analysis_id):
     url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
     with st.status("전 세계 백신 엔진들이 정밀 검사를 진행 중입니다...", expanded=True) as status:
-        for _ in range(12): 
+        for _ in range(12): # 최대 2분 대기
             res = requests.get(url, headers=HEADERS)
             if res.status_code == 200:
                 data = res.json()['data']['attributes']
@@ -117,46 +117,38 @@ def render_detailed_results(vt_data):
     st.dataframe(df, use_container_width=True, hide_index=True, height=300)
 
 # ------------------------------------------------------------------
-# 2. 프론트엔드 (UI) - 둥근 고딕 폰트 적용 & 그라데이션
+# 2. 프론트엔드 (UI) - 프리미엄 그라데이션 & 둥근 고딕 폰트 적용
 # ------------------------------------------------------------------
 st.set_page_config(page_title="EDR User Dashboard", layout="wide")
 
 st.markdown("""
     <style>
-    /* 🌟 눈누 웹폰트: 나눔스퀘어라운드 (동글동글한 고딕) 가져오기 */
+    /* 🌟 웹폰트: 나눔스퀘어라운드 */
     @font-face {
         font-family: 'NanumSquareRound';
         src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_two@1.0/NanumSquareRound.woff') format('woff');
-        font-weight: normal;
-        font-style: normal;
+        font-weight: normal; font-style: normal;
     }
     
-    /* 🌟 모든 요소에 둥근 고딕 폰트 강제 적용 */
-    * {
-        font-family: 'NanumSquareRound', 'Apple SD Gothic Neo', sans-serif !important;
-    }
+    /* 모든 요소에 폰트 강제 적용 */
+    * { font-family: 'NanumSquareRound', 'Apple SD Gothic Neo', sans-serif !important; }
 
     /* 기본 UI 숨기기 */
     [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
     
-    /* 전체 배경 그라데이션 */
-    .stApp {
-        background: linear-gradient(135deg, #242b45 0%, #0d1017 100%) !important;
-    }
-    
+    /* 전체 배경 그라데이션 (안랩 스타일) */
+    .stApp { background: linear-gradient(135deg, #242b45 0%, #0d1017 100%) !important; }
     .main { background-color: transparent !important; color: #d1d5db; }
     
-    /* 컨테이너 유리 질감 효과 */
+    /* 컨테이너 유리 질감(Glassmorphism) 효과 */
     div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
         background-color: rgba(30, 34, 51, 0.7) !important; 
         backdrop-filter: blur(10px); 
-        padding: 20px; 
-        border-radius: 12px; 
+        padding: 20px; border-radius: 12px; 
         border: 1px solid rgba(255, 255, 255, 0.08); 
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); 
     }
     
-    /* 제목 글자 색상 및 그림자 효과 */
     h1, h2, h3, h4 { color: #f3f4f6 !important; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
     </style>
     """, unsafe_allow_html=True)
@@ -164,28 +156,17 @@ st.markdown("""
 # ------------------------------------------------------------------
 # 3. 대시보드 상단 헤더 (제목 / 필터 / 실시간 시계)
 # ------------------------------------------------------------------
-# 컬럼 비율 조정: 제목(3), 필터(4), 시계/새로고침(3)
 top_col1, top_col2, top_col3 = st.columns([3, 4, 3])
 
 with top_col1: 
     st.markdown("## 🛡️ EDR Analyzer (사용자)")
 
 with top_col2: 
-    # 사진에 있던 시간 필터 UI
-    st.segmented_control(
-        "조회 범위", 
-        ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"], 
-        default="최근 24시간", 
-        label_visibility="collapsed"
-    )
+    st.segmented_control("조회 범위", ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"], default="최근 24시간", label_visibility="collapsed")
 
 with top_col3:
-    # 우측 상단 정렬을 위한 컨테이너
     with st.container():
-        # 현재 시간 가져오기
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # 시간 표시와 새로고침 버튼을 한 줄에 배치
         time_col, refresh_col = st.columns([4, 1])
         
         with time_col:
@@ -197,14 +178,34 @@ with top_col3:
             """, unsafe_allow_html=True)
             
         with refresh_col:
-            # 클릭 시 페이지를 다시 로드하는 새로고침 버튼
             if st.button("🔄", help="데이터 새로고침"):
                 st.rerun()
 
 st.markdown("---")
 
 # ------------------------------------------------------------------
-# 4. 하단 차트 및 바이러스 토탈 상세 검사기
+# 4. 중앙 레이아웃 (위험 현황 & 최근 탐지 위협)
+# ------------------------------------------------------------------
+row1_col1, row1_col2 = st.columns([3, 7])
+
+with row1_col1:
+    with st.container(border=True):
+        st.markdown("### 위험 현황")
+        st.markdown("<h1 style='color: #f87171; font-size: 3rem;'>7</h1>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        c1.metric("신규", "7"); c2.metric("확인 중", "0"); c1.metric("보류", "0"); c2.metric("확인 완료", "0")
+
+with row1_col2:
+    with st.container(border=True):
+        st.markdown("### 최근 탐지 위협")
+        log_data = pd.DataFrame([
+            {"로그 수신 날짜": "2026-04-24 17:41:49", "위험도": "L", "탐지 유형": "의심", "프로세스": "powershell.exe", "상태": "신규"},
+            {"로그 수신 날짜": "2026-04-24 16:22:10", "위험도": "H", "탐지 유형": "악성", "프로세스": "unknown.exe", "상태": "신규"},
+        ])
+        st.dataframe(log_data, use_container_width=True, hide_index=True, height=150)
+
+# ------------------------------------------------------------------
+# 5. 하단 레이아웃 (차트 & 바이러스 토탈 상세 검사기)
 # ------------------------------------------------------------------
 row2_col1, row2_col2, row2_col3 = st.columns([3, 3, 4])
 
@@ -222,7 +223,6 @@ with row2_col2:
             theta="건수:Q", color=alt.Color("유형:N", scale=alt.Scale(domain=["악성", "의심", "정상"], range=["#8b5cf6", "#a78bfa", "#10b981"]))).properties(height=200)
         st.altair_chart(type_chart, use_container_width=True)
 
-# 우측: 바이러스 토탈 상세 결과 탭
 with row2_col3:
     with st.container(border=True):
         st.markdown("### 🔍 실시간 정밀 검사 (VirusTotal)")
@@ -232,16 +232,12 @@ with row2_col3:
             f = st.file_uploader("파일 선택", label_visibility="collapsed")
             if f and st.button("🚀 정밀 분석 시작", key="f_btn", use_container_width=True):
                 vt_data = analyze_file_vt(f)
-                if vt_data:
-                    render_detailed_results(vt_data)
-                else:
-                    st.error("분석 중 에러가 발생했습니다.")
+                if vt_data: render_detailed_results(vt_data)
+                else: st.error("분석 중 에러가 발생했습니다.")
                     
         with t2:
             u = st.text_input("검사할 URL 입력", placeholder="https://www.google.com", label_visibility="collapsed")
             if u and st.button("🚀 링크 분석 시작", key="u_btn", use_container_width=True):
                 vt_data = analyze_url_vt(u)
-                if vt_data:
-                    render_detailed_results(vt_data)
-                else:
-                    st.error("분석 중 에러가 발생했습니다.")
+                if vt_data: render_detailed_results(vt_data)
+                else: st.error("분석 중 에러가 발생했습니다.")
