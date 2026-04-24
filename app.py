@@ -125,18 +125,35 @@ def render_detailed_results(vt_data):
     st.dataframe(df, use_container_width=True, hide_index=True, height=300)
 
 # ------------------------------------------------------------------
-# 2. 프론트엔드 (UI) - 기존 안랩 스타일 유지
+# 2. 프론트엔드 (UI) - 프리미엄 그라데이션 테마
 # ------------------------------------------------------------------
 st.set_page_config(page_title="EDR User Dashboard", layout="wide")
 
 st.markdown("""
     <style>
+    /* 기본 UI 숨기기 */
     [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
-    .main { background-color: #1e2233; color: #d1d5db; }
-    div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
-        background-color: #262b3d; padding: 20px; border-radius: 10px; border: 1px solid #374151; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    
+    /* 🌟 전체 배경 그라데이션 (안랩 스타일의 깊은 네이비 사선 그라데이션) */
+    .stApp {
+        background: linear-gradient(135deg, #242b45 0%, #0d1017 100%) !important;
     }
-    h1, h2, h3, h4 { color: #f3f4f6 !important; }
+    
+    /* 메인 배경을 투명하게 만들어 그라데이션이 드러나게 함 */
+    .main { background-color: transparent !important; color: #d1d5db; }
+    
+    /* 🌟 컨테이너(카드) 디자인: 반투명 유리 질감 효과 추가 */
+    div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
+        background-color: rgba(30, 34, 51, 0.7) !important; /* 살짝 투명한 배경 */
+        backdrop-filter: blur(10px); /* 배경 흐리게 (유리 효과) */
+        padding: 20px; 
+        border-radius: 12px; 
+        border: 1px solid rgba(255, 255, 255, 0.08); /* 은은한 테두리 */
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); /* 깊이감 있는 그림자 */
+    }
+    
+    /* 글자 색상 뚜렷하게 */
+    h1, h2, h3, h4 { color: #f3f4f6 !important; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
     </style>
     """, unsafe_allow_html=True)
 
