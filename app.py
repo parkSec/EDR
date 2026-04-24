@@ -83,7 +83,7 @@ def render_detailed_results(vt_data):
     st.dataframe(df, use_container_width=True, hide_index=True, height=200)
 
 # ------------------------------------------------------------------
-# 2. 프론트엔드 (UI) - CSS 간섭 해결 & 디자인 최적화
+# 2. 프론트엔드 (UI) - CSS 간섭 완벽 해결
 # ------------------------------------------------------------------
 st.set_page_config(page_title="EDR User Dashboard", layout="wide")
 
@@ -95,20 +95,26 @@ st.markdown("""
         font-weight: normal; font-style: normal;
     }
     
-    * { font-family: 'NanumSquareRound', sans-serif !important; }
+    /* 🚨 1. 아이콘이 깨지지 않도록 전체 선택자(*)를 빼고 텍스트 태그만 골라서 폰트 적용 */
+    h1, h2, h3, h4, p, label, .stMarkdown, .stText { font-family: 'NanumSquareRound', sans-serif !important; }
+    
+    /* 숫자 폰트 크기 최적화 */
+    div[data-testid="stMetricValue"] { font-family: 'NanumSquareRound', sans-serif !important; font-size: 1.6rem !important; }
+    div[data-testid="stMetricLabel"] { font-family: 'NanumSquareRound', sans-serif !important; font-size: 0.8rem !important; }
+
     h2 { font-size: 1.4rem !important; margin-bottom: 0px !important;}
     h3 { font-size: 1.1rem !important; }
     h4 { font-size: 0.9rem !important; }
-    p, span, div { font-size: 0.85rem !important; }
-    
-    div[data-testid="stMetricValue"] { font-size: 1.6rem !important; }
-    div[data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
 
+    /* 🚨 2. 스트림릿 내부 아이콘(구름 모양)이 글자로 변하는 것 강제 방지! */
+    .material-icons, span[class*="icon"] { font-family: 'Material Symbols Rounded', 'Material Icons' !important; }
+
+    /* 기본 UI 숨기기 및 배경 테마 */
     [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
     .stApp { background: linear-gradient(135deg, #1e2233 0%, #0d1017 100%) !important; }
     .main { background-color: transparent !important; color: #d1d5db; }
     
-    /* 🚨 핵심 수정 부분: 파일 업로더가 깨지지 않도록 '테두리가 있는 컨테이너'만 정확히 타겟팅합니다. */
+    /* 컨테이너 유리 질감 (테두리 상자만 콕 집어서 적용) */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: rgba(30, 34, 51, 0.4) !important; 
         backdrop-filter: blur(8px); 
