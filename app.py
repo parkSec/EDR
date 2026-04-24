@@ -56,7 +56,7 @@ def wait_for_analysis(analysis_id):
             if res.status_code == 200:
                 data = res.json()['data']['attributes']
                 if data['status'] == 'completed':
-                    status.update(label="검사 완료!", state="complete", expanded=False)
+                    status.update(label="검사 완료", state="complete", expanded=False)
                     return format_vt_response(data['stats'], data['results'])
             time.sleep(10) 
     return None
@@ -66,16 +66,16 @@ def render_detailed_results(vt_data):
     m = stats['malicious']
     total = m + stats['harmless'] + stats.get('undetected', 0)
     
-    if m > 0: st.error(f"🚨 **위험!** {total}개 중 **{m}개**가 악성으로 탐지했습니다.")
-    else: st.success(f"✅ **안전!** 악성 내역이 없습니다.")
+    if m > 0: st.error(f"[위험] {total}개 중 {m}개가 악성으로 탐지했습니다.")
+    else: st.success(f"[안전] 악성 내역이 없습니다.")
     
     df_list = []
     for engine, details in vt_data['results'].items():
         cat = details.get('category', 'undetected')
-        if cat == 'malicious': status, sort_val = "🚨 악성", 1
-        elif cat == 'suspicious': status, sort_val = "⚠️ 의심", 2
-        elif cat == 'harmless': status, sort_val = "✅ 정상", 3
-        else: status, sort_val = "➖ 미탐지", 4
+        if cat == 'malicious': status, sort_val = "악성", 1
+        elif cat == 'suspicious': status, sort_val = "의심", 2
+        elif cat == 'harmless': status, sort_val = "정상", 3
+        else: status, sort_val = "미탐지", 4
             
         df_list.append({"엔진": engine, "결과": status, "진단명": details.get('result', ''), "_sort": sort_val})
         
@@ -83,7 +83,7 @@ def render_detailed_results(vt_data):
     st.dataframe(df, use_container_width=True, hide_index=True, height=200)
 
 # ------------------------------------------------------------------
-# 2. 프론트엔드 (UI) - CSS 간섭 완벽 해결
+# 2. 프론트엔드 (UI) - 이모지 제거 및 세련된 새로고침 아이콘 CSS
 # ------------------------------------------------------------------
 st.set_page_config(page_title="EDR User Dashboard", layout="wide")
 
@@ -95,10 +95,8 @@ st.markdown("""
         font-weight: normal; font-style: normal;
     }
     
-    /* 🚨 1. 아이콘이 깨지지 않도록 전체 선택자(*)를 빼고 텍스트 태그만 골라서 폰트 적용 */
     h1, h2, h3, h4, p, label, .stMarkdown, .stText { font-family: 'NanumSquareRound', sans-serif !important; }
     
-    /* 숫자 폰트 크기 최적화 */
     div[data-testid="stMetricValue"] { font-family: 'NanumSquareRound', sans-serif !important; font-size: 1.6rem !important; }
     div[data-testid="stMetricLabel"] { font-family: 'NanumSquareRound', sans-serif !important; font-size: 0.8rem !important; }
 
@@ -106,15 +104,23 @@ st.markdown("""
     h3 { font-size: 1.1rem !important; }
     h4 { font-size: 0.9rem !important; }
 
-    /* 🚨 2. 스트림릿 내부 아이콘(구름 모양)이 글자로 변하는 것 강제 방지! */
+    /* 🚨 새로고침 버튼 디자인 커스텀 (크기 UP & 블루톤) */
+    button[kind="tertiary"] p {
+        font-size: 1.8rem !important; /* 크기 키우기 */
+        color: #3b82f6 !important; /* 세련된 파란색 */
+        font-weight: 800 !important;
+        margin-top: -5px !important;
+    }
+    button[kind="tertiary"]:hover p {
+        color: #60a5fa !important; /* 마우스 올렸을 때 밝은 파란색 */
+    }
+
     .material-icons, span[class*="icon"] { font-family: 'Material Symbols Rounded', 'Material Icons' !important; }
 
-    /* 기본 UI 숨기기 및 배경 테마 */
     [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
     .stApp { background: linear-gradient(135deg, #1e2233 0%, #0d1017 100%) !important; }
     .main { background-color: transparent !important; color: #d1d5db; }
     
-    /* 컨테이너 유리 질감 (테두리 상자만 콕 집어서 적용) */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: rgba(30, 34, 51, 0.4) !important; 
         backdrop-filter: blur(8px); 
@@ -132,7 +138,7 @@ st.markdown("""
 top_col1, top_col2, top_col3 = st.columns([3, 4, 3])
 
 with top_col1: 
-    st.markdown("## 🛡️ EDR Analyzer (사용자)")
+    st.markdown("## EDR Analyzer (사용자)")
 
 with top_col2: 
     st.segmented_control("조회 범위", ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"], default="최근 24시간", label_visibility="collapsed")
@@ -161,7 +167,8 @@ with top_col3:
         """, height=35)
         
     with refresh_col:
-        if st.button("🔄", type="tertiary", help="데이터 새로고침"):
+        # 🚨 이모지 🔄 대신 예쁜 기호 ↻ 사용
+        if st.button("↻", type="tertiary", help="데이터 새로고침"):
             st.rerun()
 
 st.markdown("---")
@@ -210,19 +217,19 @@ with row2_col2:
 
 with row2_col3:
     with st.container(border=True):
-        st.markdown("### 🔍 실시간 정밀 검사 (VirusTotal)")
-        t1, t2 = st.tabs(["📁 파일 업로드 검사", "🔗 URL 링크 검사"])
+        st.markdown("### 실시간 정밀 검사 (VirusTotal)")
+        t1, t2 = st.tabs(["파일 업로드 검사", "URL 링크 검사"])
         
         with t1:
             f = st.file_uploader("검사할 파일 선택", label_visibility="collapsed")
-            if f and st.button("🚀 정밀 분석 시작", key="f_btn", use_container_width=True):
+            if f and st.button("정밀 분석 시작", key="f_btn", use_container_width=True):
                 vt_data = analyze_file_vt(f)
                 if vt_data: render_detailed_results(vt_data)
                 else: st.error("분석 중 에러가 발생했습니다.")
                     
         with t2:
             u = st.text_input("검사할 URL 입력", placeholder="https://www.google.com", label_visibility="collapsed")
-            if u and st.button("🚀 링크 분석 시작", key="u_btn", use_container_width=True):
+            if u and st.button("링크 분석 시작", key="u_btn", use_container_width=True):
                 vt_data = analyze_url_vt(u)
                 if vt_data: render_detailed_results(vt_data)
                 else: st.error("분석 중 에러가 발생했습니다.")
