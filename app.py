@@ -175,3 +175,24 @@ with row2_col3:
                         
                     else:
                         st.error(f"❌ **[에러]** 조회를 실패했습니다: {result['msg']}")
+                        # ------------------------------------------------------------------
+# 6. 하단 퀵 링크 영역 (새로 추가!)
+# ------------------------------------------------------------------
+st.markdown("---")
+st.markdown("### 🔗 관련 보안 서비스 (Quick Links)")
+
+# 버튼을 나란히 배치하기 위해 4칸으로 나누기
+link_col1, link_col2, link_col3, link_col4 = st.columns(4)
+
+with link_col1:
+    # 🚨 아래 주소에 팀장님이 만들어주신 '관리자용 대시보드 주소'를 넣으세요!
+    st.link_button("⚙️ EDR 관리자 대시보드", "https://여기에-관리자-주소-입력.streamlit.app", use_container_width=True)
+    
+with link_col2:
+    st.link_button("🌐 VirusTotal 공식 홈페이지", "https://www.virustotal.com", use_container_width=True)
+    
+with link_col3:
+    st.link_button("🛡️ KISA 보호나라 (최신 보안 권고)", "https://www.boho.or.kr", use_container_width=True)
+    
+with link_col4:
+    st.link_button("📖 사내 보안 가이드라인", "https://github.com", use_container_width=True)
