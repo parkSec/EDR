@@ -5,10 +5,10 @@ import hashlib
 import requests
 import base64
 import time
-import datetime  # 시계 기능을 위한 부품 완벽 추가!
+import streamlit.components.v1 as components # 실시간 시계를 위한 부품
 
 # ------------------------------------------------------------------
-# 1. 백엔드: 바이러스 토탈 API '진짜 검사' 엔진 (상세 결과 포함)
+# 1. 백엔드: 바이러스 토탈 API
 # ------------------------------------------------------------------
 API_KEY = "35b41543f4ab1f12d38e77b09985b149526eb8fe01ccad0b65699c08c15c1de0" # 🚨 실제 키 필수!
 HEADERS = {"accept": "application/json", "x-apikey": API_KEY}
@@ -19,23 +19,18 @@ def format_vt_response(stats, results):
 def analyze_file_vt(uploaded_file):
     bytes_data = uploaded_file.getvalue()
     file_hash = hashlib.sha256(bytes_data).hexdigest()
-    
     search_url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
     res = requests.get(search_url, headers=HEADERS)
     
     if res.status_code == 200:
         data = res.json()['data']['attributes']
         return format_vt_response(data['last_analysis_stats'], data['last_analysis_results'])
-    
     elif res.status_code == 404:
-        st.info("신규 파일입니다. 서버에 업로드하여 정밀 검사를 시작합니다...")
         upload_url = "https://www.virustotal.com/api/v3/files"
         files = {"file": (uploaded_file.name, bytes_data)}
         up_res = requests.post(upload_url, headers=HEADERS, files=files)
-        
         if up_res.status_code == 200:
-            analysis_id = up_res.json()['data']['id']
-            return wait_for_analysis(analysis_id)
+            return wait_for_analysis(up_res.json()['data']['id'])
     return None
 
 def analyze_url_vt(target_url):
@@ -46,22 +41,17 @@ def analyze_url_vt(target_url):
     if res.status_code == 200:
         data = res.json()['data']['attributes']
         return format_vt_response(data['last_analysis_stats'], data['last_analysis_results'])
-    
     elif res.status_code == 404:
-        st.info("처음 분석되는 주소입니다. 검사 요청을 보냅니다...")
         post_url = "https://www.virustotal.com/api/v3/urls"
-        payload = {"url": target_url}
-        post_res = requests.post(post_url, headers=HEADERS, data=payload)
-        
+        post_res = requests.post(post_url, headers=HEADERS, data={"url": target_url})
         if post_res.status_code == 200:
-            analysis_id = post_res.json()['data']['id']
-            return wait_for_analysis(analysis_id)
+            return wait_for_analysis(post_res.json()['data']['id'])
     return None
 
 def wait_for_analysis(analysis_id):
     url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
-    with st.status("전 세계 백신 엔진들이 정밀 검사를 진행 중입니다...", expanded=True) as status:
-        for _ in range(12): # 최대 2분 대기
+    with st.status("검사를 진행 중입니다...", expanded=True) as status:
+        for _ in range(12): 
             res = requests.get(url, headers=HEADERS)
             if res.status_code == 200:
                 data = res.json()['data']['attributes']
@@ -73,88 +63,69 @@ def wait_for_analysis(analysis_id):
 
 def render_detailed_results(vt_data):
     stats = vt_data['stats']
-    results = vt_data['results']
-    
     m = stats['malicious']
     total = m + stats['harmless'] + stats.get('undetected', 0)
     
-    if m > 0: 
-        st.error(f"🚨 **위험!** 전 세계 {total}개 백신 중 **{m}개**가 악성으로 탐지했습니다.")
-    else: 
-        st.success(f"✅ **안전!** {total}개 백신 엔진에서 악성 내역이 발견되지 않았습니다.")
-    
-    st.write("---")
-    st.markdown("#### 🦠 상세 백신 엔진별 진단 결과")
+    if m > 0: st.error(f"🚨 **위험!** {total}개 중 **{m}개**가 악성으로 탐지했습니다.")
+    else: st.success(f"✅ **안전!** 악성 내역이 없습니다.")
     
     df_list = []
-    for engine, details in results.items():
+    for engine, details in vt_data['results'].items():
         cat = details.get('category', 'undetected')
-        diag_name = details.get('result', '')
-        
-        if cat == 'malicious':
-            status = "🚨 악성"
-            sort_val = 1
-        elif cat == 'suspicious':
-            status = "⚠️ 의심"
-            sort_val = 2
-        elif cat == 'harmless':
-            status = "✅ 정상"
-            diag_name = "안전함"
-            sort_val = 3
-        else:
-            status = "➖ 미탐지"
-            diag_name = "미탐지"
-            sort_val = 4
+        if cat == 'malicious': status, sort_val = "🚨 악성", 1
+        elif cat == 'suspicious': status, sort_val = "⚠️ 의심", 2
+        elif cat == 'harmless': status, sort_val = "✅ 정상", 3
+        else: status, sort_val = "➖ 미탐지", 4
             
-        df_list.append({
-            "백신 엔진 (Engine)": engine,
-            "탐지 결과": status,
-            "진단명 (Result)": diag_name,
-            "_sort": sort_val 
-        })
+        df_list.append({"엔진": engine, "결과": status, "진단명": details.get('result', ''), "_sort": sort_val})
         
     df = pd.DataFrame(df_list).sort_values(by="_sort").drop(columns=["_sort"])
-    st.dataframe(df, use_container_width=True, hide_index=True, height=300)
+    st.dataframe(df, use_container_width=True, hide_index=True, height=200)
 
 # ------------------------------------------------------------------
-# 2. 프론트엔드 (UI) - 프리미엄 그라데이션 & 둥근 고딕 폰트 적용
+# 2. 프론트엔드 (UI) - 폰트 크기 축소 & 차트 투명화 & 새로고침 아이콘
 # ------------------------------------------------------------------
 st.set_page_config(page_title="EDR User Dashboard", layout="wide")
 
 st.markdown("""
     <style>
-    /* 🌟 웹폰트: 나눔스퀘어라운드 */
+    /* 웹폰트 적용 */
     @font-face {
         font-family: 'NanumSquareRound';
         src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_two@1.0/NanumSquareRound.woff') format('woff');
         font-weight: normal; font-style: normal;
     }
     
-    /* 모든 요소에 폰트 강제 적용 */
-    * { font-family: 'NanumSquareRound', 'Apple SD Gothic Neo', sans-serif !important; }
-
-    /* 기본 UI 숨기기 */
-    [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
+    /* ✅ 폰트 크기 전체적으로 축소 */
+    * { font-family: 'NanumSquareRound', sans-serif !important; }
+    h2 { font-size: 1.4rem !important; margin-bottom: 0px !important;}
+    h3 { font-size: 1.1rem !important; }
+    h4 { font-size: 0.9rem !important; }
+    p, span, div { font-size: 0.85rem !important; }
     
-    /* 전체 배경 그라데이션 (안랩 스타일) */
-    .stApp { background: linear-gradient(135deg, #242b45 0%, #0d1017 100%) !important; }
+    /* 숫자 크기 조절 */
+    div[data-testid="stMetricValue"] { font-size: 1.6rem !important; }
+    div[data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
+
+    /* 기본 UI 숨기기 및 배경 */
+    [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
+    .stApp { background: linear-gradient(135deg, #1e2233 0%, #0d1017 100%) !important; }
     .main { background-color: transparent !important; color: #d1d5db; }
     
-    /* 컨테이너 유리 질감(Glassmorphism) 효과 */
+    /* 컨테이너 유리 질감 */
     div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
-        background-color: rgba(30, 34, 51, 0.7) !important; 
-        backdrop-filter: blur(10px); 
-        padding: 20px; border-radius: 12px; 
-        border: 1px solid rgba(255, 255, 255, 0.08); 
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); 
+        background-color: rgba(30, 34, 51, 0.4) !important; 
+        backdrop-filter: blur(8px); 
+        padding: 15px; border-radius: 10px; 
+        border: 1px solid rgba(255, 255, 255, 0.05); 
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3); 
     }
-    
-    h1, h2, h3, h4 { color: #f3f4f6 !important; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+    h1, h2, h3, h4 { color: #f3f4f6 !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
-# 3. 대시보드 상단 헤더 (제목 / 필터 / 실시간 시계)
+# 3. 대시보드 상단 헤더 (제목 / 필터 / ✅ 실시간 움직이는 시계)
 # ------------------------------------------------------------------
 top_col1, top_col2, top_col3 = st.columns([3, 4, 3])
 
@@ -165,21 +136,33 @@ with top_col2:
     st.segmented_control("조회 범위", ["최근 24시간", "최근 7일", "최근 14일", "최근 30일"], default="최근 24시간", label_visibility="collapsed")
 
 with top_col3:
-    with st.container():
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        time_col, refresh_col = st.columns([4, 1])
+    time_col, refresh_col = st.columns([5, 1])
+    with time_col:
+        # ✅ HTML/JS를 주입하여 1초마다 움직이는 진짜 실시간 시계 구현
+        components.html("""
+        <div style="text-align: right; font-family: 'NanumSquareRound', sans-serif; color: #f3f4f6; padding-top: 5px;">
+            <span id="clock" style="font-size: 0.95rem; font-weight: bold; text-shadow: 0 1px 2px rgba(0,0,0,0.5);"></span>
+        </div>
+        <script>
+            function updateClock() {
+                const now = new Date();
+                const str = now.getFullYear() + '-' +
+                            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+                            String(now.getDate()).padStart(2, '0') + ' ' +
+                            String(now.getHours()).padStart(2, '0') + ':' +
+                            String(now.getMinutes()).padStart(2, '0') + ':' +
+                            String(now.getSeconds()).padStart(2, '0');
+                document.getElementById('clock').innerText = str;
+            }
+            setInterval(updateClock, 1000);
+            updateClock();
+        </script>
+        """, height=35)
         
-        with time_col:
-            st.markdown(f"""
-                <div style="text-align: right; padding-top: 5px;">
-                    <span style="font-size: 0.85rem; color: #94a3b8;">마지막 업데이트:</span><br>
-                    <span style="font-size: 1rem; font-weight: bold; color: #f3f4f6;">{now}</span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-        with refresh_col:
-            if st.button("🔄", help="데이터 새로고침"):
-                st.rerun()
+    with refresh_col:
+        # ✅ type="tertiary"를 사용하여 네모 박스 테두리 없는 깔끔한 아이콘 생성
+        if st.button("🔄", type="tertiary", help="데이터 새로고침"):
+            st.rerun()
 
 st.markdown("---")
 
@@ -191,7 +174,7 @@ row1_col1, row1_col2 = st.columns([3, 7])
 with row1_col1:
     with st.container(border=True):
         st.markdown("### 위험 현황")
-        st.markdown("<h1 style='color: #f87171; font-size: 3rem;'>7</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='color: #f87171; font-size: 2.5rem; margin-top:-10px;'>7</h1>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         c1.metric("신규", "7"); c2.metric("확인 중", "0"); c1.metric("보류", "0"); c2.metric("확인 완료", "0")
 
@@ -202,7 +185,7 @@ with row1_col2:
             {"로그 수신 날짜": "2026-04-24 17:41:49", "위험도": "L", "탐지 유형": "의심", "프로세스": "powershell.exe", "상태": "신규"},
             {"로그 수신 날짜": "2026-04-24 16:22:10", "위험도": "H", "탐지 유형": "악성", "프로세스": "unknown.exe", "상태": "신규"},
         ])
-        st.dataframe(log_data, use_container_width=True, hide_index=True, height=150)
+        st.dataframe(log_data, use_container_width=True, hide_index=True, height=130)
 
 # ------------------------------------------------------------------
 # 5. 하단 레이아웃 (차트 & 바이러스 토탈 상세 검사기)
@@ -212,15 +195,18 @@ row2_col1, row2_col2, row2_col3 = st.columns([3, 3, 4])
 with row2_col1:
     with st.container(border=True):
         st.markdown("### 위험도별 현황")
-        risk_chart = alt.Chart(pd.DataFrame({"위험도": ["High", "Medium", "Low"], "건수": [1, 0, 6]})).mark_arc(innerRadius=60).encode(
-            theta="건수:Q", color=alt.Color("위험도:N", scale=alt.Scale(domain=["High", "Medium", "Low"], range=["#ef4444", "#f59e0b", "#3b82f6"]))).properties(height=200)
+        # ✅ configure_view(strokeWidth=0) 등으로 차트 배경 완벽 투명화
+        risk_chart = alt.Chart(pd.DataFrame({"위험도": ["High", "Medium", "Low"], "건수": [1, 0, 6]})).mark_arc(innerRadius=50).encode(
+            theta="건수:Q", color=alt.Color("위험도:N", scale=alt.Scale(domain=["High", "Medium", "Low"], range=["#ef4444", "#f59e0b", "#3b82f6"]))
+        ).properties(height=180, background='transparent').configure_view(strokeWidth=0)
         st.altair_chart(risk_chart, use_container_width=True)
 
 with row2_col2:
     with st.container(border=True):
         st.markdown("### 탐지 유형별 현황")
-        type_chart = alt.Chart(pd.DataFrame({"유형": ["악성", "의심", "정상"], "건수": [1, 6, 0]})).mark_arc(innerRadius=60).encode(
-            theta="건수:Q", color=alt.Color("유형:N", scale=alt.Scale(domain=["악성", "의심", "정상"], range=["#8b5cf6", "#a78bfa", "#10b981"]))).properties(height=200)
+        type_chart = alt.Chart(pd.DataFrame({"유형": ["악성", "의심", "정상"], "건수": [1, 6, 0]})).mark_arc(innerRadius=50).encode(
+            theta="건수:Q", color=alt.Color("유형:N", scale=alt.Scale(domain=["악성", "의심", "정상"], range=["#8b5cf6", "#a78bfa", "#10b981"]))
+        ).properties(height=180, background='transparent').configure_view(strokeWidth=0)
         st.altair_chart(type_chart, use_container_width=True)
 
 with row2_col3:
@@ -229,7 +215,8 @@ with row2_col3:
         t1, t2 = st.tabs(["📁 파일 업로드 검사", "🔗 URL 링크 검사"])
         
         with t1:
-            f = st.file_uploader("파일 선택", label_visibility="collapsed")
+            # ✅ 텍스트 겹침 오류를 방지하기 위해 스트림릿 기본 텍스트 유지
+            f = st.file_uploader("파일 드래그 앤 드롭", label_visibility="collapsed")
             if f and st.button("🚀 정밀 분석 시작", key="f_btn", use_container_width=True):
                 vt_data = analyze_file_vt(f)
                 if vt_data: render_detailed_results(vt_data)
