@@ -5,7 +5,7 @@ import hashlib
 import requests
 import base64
 import time
-import streamlit.components.v1 as components # 실시간 시계를 위한 부품
+import streamlit.components.v1 as components
 
 # ------------------------------------------------------------------
 # 1. 백엔드: 바이러스 토탈 API
@@ -83,49 +83,45 @@ def render_detailed_results(vt_data):
     st.dataframe(df, use_container_width=True, hide_index=True, height=200)
 
 # ------------------------------------------------------------------
-# 2. 프론트엔드 (UI) - 폰트 크기 축소 & 차트 투명화 & 새로고침 아이콘
+# 2. 프론트엔드 (UI) - CSS 간섭 해결 & 디자인 최적화
 # ------------------------------------------------------------------
 st.set_page_config(page_title="EDR User Dashboard", layout="wide")
 
 st.markdown("""
     <style>
-    /* 웹폰트 적용 */
     @font-face {
         font-family: 'NanumSquareRound';
         src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_two@1.0/NanumSquareRound.woff') format('woff');
         font-weight: normal; font-style: normal;
     }
     
-    /* ✅ 폰트 크기 전체적으로 축소 */
     * { font-family: 'NanumSquareRound', sans-serif !important; }
     h2 { font-size: 1.4rem !important; margin-bottom: 0px !important;}
     h3 { font-size: 1.1rem !important; }
     h4 { font-size: 0.9rem !important; }
     p, span, div { font-size: 0.85rem !important; }
     
-    /* 숫자 크기 조절 */
     div[data-testid="stMetricValue"] { font-size: 1.6rem !important; }
     div[data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
 
-    /* 기본 UI 숨기기 및 배경 */
     [data-testid="stToolbar"], #MainMenu, footer, header {visibility: hidden !important;}
     .stApp { background: linear-gradient(135deg, #1e2233 0%, #0d1017 100%) !important; }
     .main { background-color: transparent !important; color: #d1d5db; }
     
-    /* 컨테이너 유리 질감 */
-    div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
+    /* 🚨 핵심 수정 부분: 파일 업로더가 깨지지 않도록 '테두리가 있는 컨테이너'만 정확히 타겟팅합니다. */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: rgba(30, 34, 51, 0.4) !important; 
         backdrop-filter: blur(8px); 
-        padding: 15px; border-radius: 10px; 
-        border: 1px solid rgba(255, 255, 255, 0.05); 
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3); 
+        border-radius: 10px !important; 
+        border: 1px solid rgba(255, 255, 255, 0.05) !important; 
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important; 
     }
     h1, h2, h3, h4 { color: #f3f4f6 !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
-# 3. 대시보드 상단 헤더 (제목 / 필터 / ✅ 실시간 움직이는 시계)
+# 3. 대시보드 상단 헤더
 # ------------------------------------------------------------------
 top_col1, top_col2, top_col3 = st.columns([3, 4, 3])
 
@@ -138,7 +134,6 @@ with top_col2:
 with top_col3:
     time_col, refresh_col = st.columns([5, 1])
     with time_col:
-        # ✅ HTML/JS를 주입하여 1초마다 움직이는 진짜 실시간 시계 구현
         components.html("""
         <div style="text-align: right; font-family: 'NanumSquareRound', sans-serif; color: #f3f4f6; padding-top: 5px;">
             <span id="clock" style="font-size: 0.95rem; font-weight: bold; text-shadow: 0 1px 2px rgba(0,0,0,0.5);"></span>
@@ -160,14 +155,13 @@ with top_col3:
         """, height=35)
         
     with refresh_col:
-        # ✅ type="tertiary"를 사용하여 네모 박스 테두리 없는 깔끔한 아이콘 생성
         if st.button("🔄", type="tertiary", help="데이터 새로고침"):
             st.rerun()
 
 st.markdown("---")
 
 # ------------------------------------------------------------------
-# 4. 중앙 레이아웃 (위험 현황 & 최근 탐지 위협)
+# 4. 중앙 레이아웃
 # ------------------------------------------------------------------
 row1_col1, row1_col2 = st.columns([3, 7])
 
@@ -188,14 +182,13 @@ with row1_col2:
         st.dataframe(log_data, use_container_width=True, hide_index=True, height=130)
 
 # ------------------------------------------------------------------
-# 5. 하단 레이아웃 (차트 & 바이러스 토탈 상세 검사기)
+# 5. 하단 레이아웃 (차트 & 검사기)
 # ------------------------------------------------------------------
 row2_col1, row2_col2, row2_col3 = st.columns([3, 3, 4])
 
 with row2_col1:
     with st.container(border=True):
         st.markdown("### 위험도별 현황")
-        # ✅ configure_view(strokeWidth=0) 등으로 차트 배경 완벽 투명화
         risk_chart = alt.Chart(pd.DataFrame({"위험도": ["High", "Medium", "Low"], "건수": [1, 0, 6]})).mark_arc(innerRadius=50).encode(
             theta="건수:Q", color=alt.Color("위험도:N", scale=alt.Scale(domain=["High", "Medium", "Low"], range=["#ef4444", "#f59e0b", "#3b82f6"]))
         ).properties(height=180, background='transparent').configure_view(strokeWidth=0)
@@ -215,8 +208,7 @@ with row2_col3:
         t1, t2 = st.tabs(["📁 파일 업로드 검사", "🔗 URL 링크 검사"])
         
         with t1:
-            # ✅ 텍스트 겹침 오류를 방지하기 위해 스트림릿 기본 텍스트 유지
-            f = st.file_uploader("파일 드래그 앤 드롭", label_visibility="collapsed")
+            f = st.file_uploader("검사할 파일 선택", label_visibility="collapsed")
             if f and st.button("🚀 정밀 분석 시작", key="f_btn", use_container_width=True):
                 vt_data = analyze_file_vt(f)
                 if vt_data: render_detailed_results(vt_data)
