@@ -347,42 +347,44 @@ row2_col1, row2_col2, row2_col3 = st.columns([3, 3, 4])
 with row2_col1:
     with st.container(border=True):
         st.markdown("### 위험도별 현황")
-        risk_df = pd.DataFrame({
-            "위험도": ["High", "Medium", "Low"],
-            "건수":   [stats["high"], stats["medium"], stats["low"]],
-        })
-        risk_df = risk_df[risk_df["건수"] > 0]
-        st.altair_chart(
-            alt.Chart(risk_df).mark_arc(innerRadius=50).encode(
-                theta="건수:Q",
-                color=alt.Color("위험도:N", scale=alt.Scale(
-                    domain=["High", "Medium", "Low"],
-                    range=["#ef4444", "#f59e0b", "#3b82f6"],
-                )),
-            ).properties(height=180, background="transparent")
-             .configure_view(strokeWidth=0),
-            use_container_width=True  # altair는 width 파라미터 미지원,
-        )
+        if not st.session_state.sysmon_logs.empty:
+            # 종한님의 가중치 점수로 판별된 '위험도' 컬럼 데이터 집계
+            risk_df = st.session_state.sysmon_logs['위험도'].value_counts().reset_index()
+            risk_df.columns = ['위험도', '건수']
+            
+            # 차트 그리기 (High: 빨강, Medium: 주황, Low: 파랑)
+            st.altair_chart(
+                alt.Chart(risk_df).mark_arc(innerRadius=50).encode(
+                    theta="건수:Q",
+                    color=alt.Color("위험도:N", scale=alt.Scale(
+                        domain=["High", "Medium", "Low"],
+                        range=["#ef4444", "#f59e0b", "#3b82f6"]
+                    )),
+                    tooltip=["위험도", "건수"]
+                ).properties(height=180), use_container_width=True
+            )
+        else:
+            st.write("데이터가 없습니다.")
 
 with row2_col2:
     with st.container(border=True):
         st.markdown("### 탐지 유형별 현황")
-        type_df = pd.DataFrame({
-            "유형": ["악성", "의심", "정상"],
-            "건수": [stats["malicious"], stats["suspicious"], stats["normal"]],
-        })
-        type_df = type_df[type_df["건수"] > 0]
-        st.altair_chart(
-            alt.Chart(type_df).mark_arc(innerRadius=50).encode(
-                theta="건수:Q",
-                color=alt.Color("유형:N", scale=alt.Scale(
-                    domain=["악성", "의심", "정상"],
-                    range=["#8b5cf6", "#a78bfa", "#10b981"],
-                )),
-            ).properties(height=180, background="transparent")
-             .configure_view(strokeWidth=0),
-            use_container_width=True  # altair는 width 파라미터 미지원,
-        )
+        if not st.session_state.sysmon_logs.empty:
+            # 종한님이 설정한 '탐지 유형' 컬럼 데이터 집계
+            type_df = st.session_state.sysmon_logs['탐지 유형'].value_counts().reset_index()
+            type_df.columns = ['유형', '건수']
+            
+            # 가로 막대 차트로 탐지 유형 노출
+            st.altair_chart(
+                alt.Chart(type_df).mark_bar().encode(
+                    x="건수:Q",
+                    y=alt.Y("유형:N", sort='-x', title=None),
+                    color=alt.Color("유형:N", legend=None),
+                    tooltip=["유형", "건수"]
+                ).properties(height=180), use_container_width=True
+            )
+        else:
+            st.write("데이터가 없습니다.")
 
 with row2_col3:
     with st.container(border=True):
