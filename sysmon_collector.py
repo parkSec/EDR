@@ -155,3 +155,64 @@ $result | ConvertTo-Json -Depth 3
         })
 
     return rows
+# ==================================================================
+# (이 위쪽은 기존 sysmon_collector.py 원본 코드입니다. 절대 건드리지 마세요!)
+# ==================================================================
+
+# ==================================================================
+# ⚖️  EDR 위협 판별 및 분류 로직 (순수 Rule-based)
+# ==================================================================
+def evaluate_threat_level(log_data: dict) -> dict:
+    """
+   
+    """
+    event_id = log_data.get("EventID", 0)
+    
+    # 1. 네트워크 통신 (Event ID 3) - C&C 서버 통신 및 외부 유출 위험
+    if event_id == 3:
+        log_data["상태"] = "의심(주의)"
+        log_data["위험도"] = "High"
+        log_data["탐지 유형"] = "네트워크 이상 통신"
+        log_data["조치내용"] = "⚠️ 외부 통신 시도 (정밀분석 대상)"
+        
+    # 2. 프로세스 생성 (Event ID 1) - 악성코드 및 스크립트 실행 가능성
+    elif event_id == 1:
+        log_data["상태"] = "의심"
+        log_data["위험도"] = "Medium"
+        log_data["탐지 유형"] = "의심스러운 프로세스 실행"
+        log_data["조치내용"] = "⏸️ 신규 프로세스 실행 모니터링"
+        
+    # 3. DNS 쿼리 (Event ID 22) - 악성 도메인 탐색
+    elif event_id == 22:
+        log_data["상태"] = "의심"
+        log_data["위험도"] = "Low"
+        log_data["탐지 유형"] = "비정상 DNS 요청"
+        log_data["조치내용"] = "👀 DNS 접속 기록 유지"
+        
+    # 4. 프로세스 종료 (Event ID 5) - 일반적인 정상 행위
+    elif event_id == 5:
+        log_data["상태"] = "정상"
+        log_data["위험도"] = "Low"
+        log_data["탐지 유형"] = "정상 행위"
+        log_data["조치내용"] = "✅ 정상 종료 (기록 유지)"
+        
+    # 5. 그 외의 알 수 없는 이벤트
+    else:
+        log_data["상태"] = "신규"
+        log_data["위험도"] = "Low"
+        log_data["탐지 유형"] = "알 수 없음"
+        log_data["조치내용"] = "기본 수집"
+
+    return log_data
+
+def apply_jonghan_policy(collected_logs: list[dict]) -> list[dict]:
+    """
+  
+    """
+    processed_logs = []
+    for log in collected_logs:
+       
+        judged_log = evaluate_threat_level(log)
+        processed_logs.append(judged_log)
+        
+    return processed_logs
