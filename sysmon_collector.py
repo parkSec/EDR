@@ -156,66 +156,60 @@ $result | ConvertTo-Json -Depth 3
 
     return rows
 # ==================================================================
-# ⚖️ [김종한 담당] EDR 위협 판별 및 분류 로직 (Rule-based)
+# ⚖️ [김종한 담당] EDR 위협 가중치 판별 시스템 (ID 1, 3, 5, 22)
 # ==================================================================
 def evaluate_threat_level(log_data: dict) -> dict:
-    """
-    기존 원본 코드에서 들어간 '룰 레벨', '위험도', '탐지 유형' 등을 
-    종한님의 판별 기준에 따라 새롭게 정의(Override)합니다.
-    """
+    score = 0
     event_id = log_data.get("EventID", 0)
-    
-    # 1. 네트워크 통신 (Event ID 3)
-    if event_id == 3:
-        log_data["상태"] = "의심(주의)"
-        log_data["위험도"] = "High"  # 기존 'M'을 'High'로 덮어씀
-        log_data["룰 레벨"] = "중요"
-        log_data["탐지 유형"] = "네트워크 이상 통신"
-        log_data["조치내용"] = "⚠️ 외부 통신 시도 (정밀분석 대상)"
-        
-    # 2. 프로세스 생성 (Event ID 1)
-    elif event_id == 1:
-        log_data["상태"] = "의심"
-        log_data["위험도"] = "Medium"
-        log_data["룰 레벨"] = "일반"
-        log_data["탐지 유형"] = "의심스러운 프로세스 실행"
-        log_data["조치내용"] = "⏸️ 신규 프로세스 실행 모니터링"
-        
-    # 3. DNS 쿼리 (Event ID 22)
-    elif event_id == 22:
-        log_data["상태"] = "의심"
-        log_data["위험도"] = "Low"
-        log_data["룰 레벨"] = "일반"
-        log_data["탐지 유형"] = "비정상 DNS 요청"
-        log_data["조치내용"] = "👀 DNS 접속 기록 유지"
-        
-    # 4. 프로세스 종료 (Event ID 5)
-    elif event_id == 5:
-        log_data["상태"] = "정상"
-        log_data["위험도"] = "Low"
-        log_data["룰 레벨"] = "일반"
-        log_data["탐지 유형"] = "정상 행위"
-        log_data["조치내용"] = "✅ 정상 종료 (기록 유지)"
-        
-    # 5. 기타
-    else:
-        log_data["상태"] = "신규"
-        log_data["위험도"] = "Low"
-        log_data["탐지 유형"] = "알 수 없음"
+    process_name = log_data.get("프로세스", "").lower()
+    cmd_line = log_data.get("CommandLine", "").lower()
+    dest_port = str(log_data.get("DestinationPort", ""))
 
+    # --- [Step 1] 이벤트별 기본 점수 및 유형 설정 ---
+    if event_id == 1:
+        score += 10
+        log_data["탐지 유형"] = "프로세스 실행"
+    elif event_id == 3:
+        score += 30
+        log_data["탐지 유형"] = "네트워크 활동"
+    elif event_id == 5:
+        score += 5
+        log_data["탐지 유형"] = "프로세스 종료"
+    elif event_id == 22:
+        score += 10
+        log_data["탐지 유형"] = "DNS 질의"
+
+    # --- [Step 2] 가중치 부여 (위험 행위 탐지) ---
+    # 1. 위험 도구 실행 가중치 (ID 1 연관)
+    danger_tools = ["powershell", "cmd.exe", "certutil", "bitsadmin", "schtasks", "reg.exe"]
+    if any(tool in process_name for tool in danger_tools):
+        score += 40
+        log_data["탐지 유형"] = "위험 도구 실행 탐지"
+
+    # 2. 비표준 포트 통신 가중치 (ID 3 연관)
+    if event_id == 3 and dest_port not in ["80", "443", ""]:
+        score += 20
+        log_data["탐지 유형"] = "비표준 포트 통신 탐지"
+
+    # 3. 보안 프로그램 강제 종료 가중치 (ID 5 연관 - 가장 치명적)
+    security_apps = ["v3", "alyac", "msmpeng", "defender", "edr", "agent"]
+    if event_id == 5 and any(app in process_name for app in security_apps):
+        score += 60
+        log_data["탐지 유형"] = "🚨 보안 서비스 무력화 의심"
+
+    # --- [Step 3] 최종 등급 판정 ---
+    log_data["위험점수"] = score
+
+    if score >= 80:
+        log_data["상태"], log_data["위험도"] = "🚨 악성", "High"
+    elif score >= 40:
+        log_data["상태"], log_data["위험도"] = "⚠️ 의심", "Medium"
+    else:
+        log_data["상태"], log_data["위험도"] = "✅ 정상", "Low"
+
+    log_data["조치내용"] = f"종합 위험 점수 {score}점 산출"
     return log_data
 
 def apply_jonghan_policy(collected_logs: list[dict]) -> list[dict]:
-    """
-    
-    """
-    if not collected_logs:
-        return []
-        
-    processed_logs = []
-    for log in collected_logs:
-       
-        judged_log = evaluate_threat_level(log)
-        processed_logs.append(judged_log)
-        
-    return processed_logs
+    """수집된 로그에 종한님의 가중치 법을 일괄 적용"""
+    return [evaluate_threat_level(log) for log in collected_logs]
