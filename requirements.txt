@@ -6,4 +6,3 @@ fastapi
 uvicorn
 sqlalchemy
 psycopg2-binary
-pywin32
