@@ -6,6 +6,8 @@ import requests
 import base64
 import time
 import platform
+import json
+from response import response_by_risk
 
 # ==================================================================
 # 설정
@@ -34,8 +36,7 @@ _SYSMON_READY: bool = _WIN32_OK and platform.system() == "Windows"
 # ==================================================================
 if "sysmon_logs" not in st.session_state:
     st.session_state.sysmon_logs = pd.DataFrame()
-
-
+    
 # ==================================================================
 # 서버 전송
 # ==================================================================
@@ -339,6 +340,80 @@ with row1_col2:
             st.caption("⚠️ Windows + pywin32 필요  `pip install pywin32`")
 
 
+# ==================================================================
+# 대응 결과 테이블
+# ==================================================================
+
+st.markdown("---")
+
+with st.container(border=True):
+
+    title_col, text_col, toggle_col = st.columns([7, 2, 1])
+
+    if "auto_response" not in st.session_state:
+        st.session_state.auto_response = True
+
+    with title_col:
+        st.markdown("### 대응 결과 현황")
+
+    with toggle_col:
+        st.toggle(
+            "자동 대응 토글",
+            key="auto_response",
+            label_visibility="collapsed"
+        )
+
+    auto_response = st.session_state.auto_response
+
+    with text_col:
+        auto_text = "자동 대응 ON" if auto_response else "자동 대응 OFF"
+        auto_color = "#10b981" if auto_response else "#ef4444"
+        st.markdown(
+            f"""
+            <div style="
+                text-align:right;
+                font-weight:bold;
+                color:{auto_color};
+                margin-top:8px;
+                font-size:16px;
+            ">
+                {auto_text}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    if "response_results" not in st.session_state:
+        st.session_state.response_results = []
+
+    if "response_triggered" not in st.session_state:
+        st.session_state.response_triggered = False
+
+    if st.session_state.auto_response and not st.session_state.response_triggered:
+        try:
+            with open("test_data.json", "r") as f:
+                test_data = json.load(f)
+
+            for item in test_data:
+                result = response_by_risk(
+                    risk_level=item["risk_level"],
+                    process_path=item["process_path"],
+                    destination_ip=item["destination_ip"]
+                )
+                if result:
+                    st.session_state.response_results.append(result)
+
+            st.session_state.response_triggered = True
+
+        except FileNotFoundError:
+            st.error("test_data.json 파일을 찾을 수 없습니다.")
+
+    if st.session_state.response_results:
+        response_df = pd.DataFrame(st.session_state.response_results)
+    else:
+        response_df = pd.DataFrame(columns=["대응 시간", "위험도", "프로세스 이름", "대응 방법", "차단된 IP", "대응 현황"])
+
+    st.dataframe(response_df, width="stretch", hide_index=True, height=200)
 # ==================================================================
 # 하단 레이아웃 - 차트 배경 투명화 및 테두리 제거 (강력 조치)
 # ==================================================================
