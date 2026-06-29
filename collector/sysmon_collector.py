@@ -35,6 +35,17 @@ _MITRE_MAP = {
 
 _RISK_MAP = {1: "M", 3: "M", 5: "L", 22: "L"}
 
+# Fileless 공격 탐지용 MITRE 매핑
+_FILELESS_MITRE_MAP = {
+    "PowerShell": {
+        "Tactic ID": "TA0005",
+        "Tactic Name": "Defense Evasion",
+        "Technique ID": "T1140",
+        "Technique Name": "Deobfuscate/Decode Files or Information",
+        "탐지 유형": "매우 의심"
+    }
+}
+
 
 def is_available() -> bool:
     return platform.system() == "Windows"
@@ -213,3 +224,114 @@ def evaluate_threat_level(log_data: dict) -> dict:
 def apply_jonghan_policy(collected_logs: list[dict]) -> list[dict]:
     """수집된 로그에 종한님의 가중치 법을 일괄 적용"""
     return [evaluate_threat_level(log) for log in collected_logs]
+
+
+# ==================================================================
+# 🔍 Fileless 공격 탐지 모듈
+# ==================================================================
+
+def collect_fileless(max_records: int = 100) -> list[dict]:
+    """
+    PowerShell Event ID 4104 (Script Block Logging) 및 백그라운드 프로세스 탐지
+    
+    Returns:
+        Fileless 위협 리스트 (Sysmon 로그 포맷과 동일)
+    """
+    if not is_available():
+        raise RuntimeError("Windows 환경에서만 수집 가능합니다.")
+    
+    try:
+        from fileless_detector import (
+            collect_powershell_events,
+            analyze_powershell_command,
+            detect_background_powershell
+        )
+    except ImportError:
+        print("⚠️ fileless_detector 모듈을 찾을 수 없습니다.")
+        return []
+    
+    fileless_logs = []
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # ========================================
+    # 1. PowerShell Script Block Logging (Event ID 4104)
+    # ========================================
+    try:
+        ps_events = collect_powershell_events(hours=1)
+        
+        for event in ps_events:
+            message = event.get("Message", "")
+            
+            # 명령어 분석
+            analysis = analyze_powershell_command(message)
+            
+            # Fileless 위협만 수집
+            if analysis["is_fileless"]:
+                row = {
+                    "로그 수신 날짜": now_str,
+                    "로그 생성 날짜": event.get("TimeCreated", now_str),
+                    "호스트 IP 주소": "localhost",
+                    "운영체제": platform.platform(),
+                    "룰 레벨": "중요",
+                    "위험도": analysis["risk_level"],
+                    "탐지 유형": "Fileless.PowerShell",
+                    "Tactic ID": "TA0005",
+                    "Tactic Name": "Defense Evasion",
+                    "Technique ID": "T1140",
+                    "Technique Name": "Deobfuscate/Decode Files or Information",
+                    "행위 내용": f"[ID:4104] PowerShell 의심 명령: {analysis['description']}",
+                    "프로세스": "powershell.exe",
+                    "상태": "신규",
+                    "EventID": 4104,
+                    "CommandLine": message[:300],
+                    "DestinationIp": "",
+                    "DestinationPort": "",
+                    "QueryName": "",
+                    "위험점수": int(analysis["risk_score"] * 100),
+                    "감지된_키워드": [k["keyword"] for k in analysis["detected_keywords"]],
+                    "난독화_지표": analysis["obfuscation_indicators"],
+                }
+                
+                fileless_logs.append(row)
+    
+    except Exception as e:
+        print(f"⚠️ PowerShell 이벤트 수집 오류: {e}")
+    
+    # ========================================
+    # 2. 백그라운드 PowerShell 프로세스 탐지
+    # ========================================
+    try:
+        bg_processes = detect_background_powershell()
+        
+        for proc in bg_processes:
+            row = {
+                "로그 수신 날짜": now_str,
+                "로그 생성 날짜": now_str,
+                "호스트 IP 주소": "localhost",
+                "운영체제": platform.platform(),
+                "룰 레벨": "중요",
+                "위험도": "M",
+                "탐지 유형": "Fileless.BackgroundProcess",
+                "Tactic ID": "TA0005",
+                "Tactic Name": "Defense Evasion",
+                "Technique ID": "T1564.002",
+                "Technique Name": "Hide Artifacts / Hidden Window",
+                "행위 내용": f"[ID:1] 백그라운드 PowerShell 프로세스 감지 (PID: {proc.get('ProcessID')})",
+                "프로세스": "powershell.exe",
+                "상태": "신규",
+                "EventID": 1,
+                "CommandLine": proc.get("CommandLine", ""),
+                "DestinationIp": "",
+                "DestinationPort": "",
+                "QueryName": "",
+                "위험점수": 60,
+                "감지된_키워드": ["숨겨진 실행"],
+                "난독화_지표": ["백그라운드 프로세스"],
+            }
+            
+            fileless_logs.append(row)
+    
+    except Exception as e:
+        print(f"⚠️ 백그라운드 프로세스 탐지 오류: {e}")
+    
+    return fileless_logs

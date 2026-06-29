@@ -36,11 +36,12 @@ TARGET_IDS_LABEL = "Event ID 1 · 3 · 5 · 22"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'collector'))
 try:
     import win32evtlog  # type: ignore[import]
-    from sysmon_collector import collect, apply_jonghan_policy
+    from sysmon_collector import collect, apply_jonghan_policy, collect_fileless
     _WIN32_OK = True
 except ImportError as e:
     collect = None
     apply_jonghan_policy = None
+    collect_fileless = None
     _WIN32_OK = False
     print(f"⚠️ Sysmon 수집기 임포트 실패: {e}")
 
@@ -153,6 +154,38 @@ def collect_and_send(max_records: int = 500) -> tuple[int, int, str]:
         sent, err = send_to_server(rows)
         return len(rows), sent, err
 
+    except Exception as e:
+        return 0, 0, str(e)
+
+
+def collect_fileless_threats() -> tuple[int, int, str]:
+    """Fileless 공격 탐지 및 서버 전송 (Returns: collected, sent, error)"""
+    if not (_WIN32_OK and platform.system() == "Windows"):
+        return 0, 0, "Windows 환경에서만 탐지 가능합니다. (pip install pywin32)"
+    
+    if not collect_fileless:
+        return 0, 0, "Fileless 탐지 모듈을 로드할 수 없습니다."
+    
+    try:
+        rows = collect_fileless(max_records=100)
+        if not rows:
+            return 0, 0, ""
+        
+        # XGBoost 위협도 추가 (가능하면)
+        rows = add_xgboost_threat_score(rows)
+        
+        # 기존 로그에 추가
+        if not st.session_state.sysmon_logs.empty:
+            st.session_state.sysmon_logs = pd.concat(
+                [st.session_state.sysmon_logs, pd.DataFrame(rows)],
+                ignore_index=True
+            )
+        else:
+            st.session_state.sysmon_logs = pd.DataFrame(rows)
+        
+        sent, err = send_to_server(rows)
+        return len(rows), sent, err
+    
     except Exception as e:
         return 0, 0, str(e)
 
@@ -392,6 +425,27 @@ with row1_col2:
                 else:
                     threat_status = "✓ XGBoost 판별 완료" if _PREDICTOR_READY else "⚠️ XGBoost 미적용"
                     st.success(f"✅ {sent}건 수집 완료 → 서버 전송됨 ({threat_status})")
+                st.rerun()
+        
+        # Fileless 공격 탐지 버튼
+        if st.button(
+            "🛡️ Fileless 공격 탐지 (PowerShell)",
+            width="stretch",
+            help="Event ID 4104 (PowerShell Script Logging) + 백그라운드 프로세스 모니터링",
+        ):
+            with st.spinner("Fileless 위협 탐지 중…"):
+                collected, sent, err = collect_fileless_threats()
+            if collected == 0:
+                if err:
+                    st.error(f"오류: {err}")
+                else:
+                    st.info("의심 Fileless 활동이 감지되지 않았습니다.")
+            else:
+                if err:
+                    st.warning(f"⚠️ {collected}건 탐지됨, 서버 전송 실패: {err}")
+                else:
+                    threat_status = "✓ XGBoost 판별 완료" if _PREDICTOR_READY else "⚠️ XGBoost 미적용"
+                    st.success(f"🚨 {sent}건 Fileless 위협 탐지 → 서버 전송됨 ({threat_status})")
                 st.rerun()
 
         if not _SYSMON_READY:
