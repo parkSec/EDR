@@ -7,6 +7,7 @@ import base64
 import time
 import platform
 import json
+import subprocess
 from response import response_by_risk
 
 # ==================================================================
@@ -383,38 +384,166 @@ with st.container(border=True):
             unsafe_allow_html=True
         )
 
-    if "response_results" not in st.session_state:
+    # response_results.json에서 결과 불러오기
+    try:
+        with open("response_results.json", "r", encoding="utf-8") as f:
+            st.session_state.response_results = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
         st.session_state.response_results = []
 
-    if "response_triggered" not in st.session_state:
-        st.session_state.response_triggered = False
-
-    if st.session_state.auto_response and not st.session_state.response_triggered:
-        try:
-            with open("test_data.json", "r") as f:
-                test_data = json.load(f)
-
-            for item in test_data:
-                result = response_by_risk(
-                    risk_level=item["risk_level"],
-                    process_path=item["process_path"],
-                    destination_ip=item["destination_ip"]
-                )
-                if result:
-                    st.session_state.response_results.append(result)
-
-            st.session_state.response_triggered = True
-
-        except FileNotFoundError:
-            #st.error("test_data.json 파일을 찾을 수 없습니다.")
-            pass
-
     if st.session_state.response_results:
-        response_df = pd.DataFrame(st.session_state.response_results)
-    else:
-        response_df = pd.DataFrame(columns=["대응 시간", "위험도", "프로세스 이름", "대응 방법", "차단된 IP", "대응 현황"])
+        display_df = pd.DataFrame([{
+            "대응 시간": r.get("대응 시간", ""),
+            "위험도": r.get("위험도", ""),
+            "프로세스": r.get("프로세스 이름", ""),
+            "IP": r.get("destination_ip") if r.get("destination_ip") else "없음",
+            "대응 방법": r.get("대응 방법", ""),
+            "대응 현황": r.get("대응 현황", "")
+        } for r in st.session_state.response_results])
 
-    st.dataframe(response_df, width="stretch", hide_index=True, height=200)
+        selected = st.dataframe(
+            display_df,
+            width="stretch",
+            hide_index=True,
+            height=200,
+            on_select="rerun",
+            selection_mode="single-row"
+        )
+
+        selected_rows = selected.selection.rows
+        if selected_rows:
+            idx = selected_rows[0]
+            r = st.session_state.response_results[idx]
+            if r.get("대응 현황") == "대기 중":
+                if st.button(f"수동 대응 - {r.get('프로세스 이름', '')}"):
+                    from response import manual_response
+                    methods, status = manual_response(
+                        process_path=r.get("process_path"),
+                        destination_ip=r.get("destination_ip")
+                    )
+                    st.session_state.response_results[idx]["대응 방법"] = ", ".join(methods)
+                    st.session_state.response_results[idx]["대응 현황"] = status
+                    with open("response_results.json", "w", encoding="utf-8") as f:
+                        json.dump(st.session_state.response_results, f, ensure_ascii=False, indent=2)
+                    st.rerun()
+    else:
+        st.info("대응 결과가 없습니다.")
+# ==================================================================
+# 차단된 프로세스/IP 조회
+# ==================================================================
+
+st.markdown("---")
+
+with st.container(border=True):
+    st.markdown("### 차단된 프로세스/IP 조회")
+
+    search_query = st.text_input("프로세스 이름 또는 IP 입력", placeholder="예: KakaoTalk, 8.8.8.8", label_visibility="collapsed")
+
+    result = subprocess.run(
+        ["netsh", "advfirewall", "firewall", "show", "rule", "name=all"],
+        capture_output=True, text=True, encoding="utf-8", errors="ignore"
+    )
+
+    rules = []
+    current_rule = {}
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("규칙 이름:"):
+            if current_rule:
+                rules.append(current_rule)
+            current_rule = {"규칙 이름": line.split(":", 1)[1].strip()}
+        elif line.startswith("작업:"):
+            current_rule["작업"] = line.split(":", 1)[1].strip()
+        elif line.startswith("프로그램:"):
+            current_rule["프로그램/IP"] = line.split(":", 1)[1].strip()
+        elif line.startswith("RemoteIP:"):
+            if "프로그램/IP" not in current_rule:
+                current_rule["프로그램/IP"] = line.split(":", 1)[1].strip()
+
+    if current_rule:
+        rules.append(current_rule)
+
+    # BLOCK_ 또는 ISOLATE_ 규칙만 필터링
+    rules = [r for r in rules if r.get("규칙 이름", "").startswith(("BLOCK_", "ISOLATE_"))]
+
+    # 프로세스 이름 / IP 추출
+    for r in rules:
+        rule_name = r.get("규칙 이름", "")
+        if rule_name.startswith("BLOCK_PROCESS_"):
+            r["프로그램/IP"] = rule_name.replace("BLOCK_PROCESS_", "")
+        elif rule_name.startswith("ISOLATE_PROCESS_"):
+            r["프로그램/IP"] = rule_name.replace("ISOLATE_PROCESS_", "")
+        elif rule_name.startswith("BLOCK_IP_"):
+            r["프로그램/IP"] = rule_name.replace("BLOCK_IP_", "")
+        elif rule_name.startswith("ISOLATE_IP_"):
+            r["프로그램/IP"] = rule_name.replace("ISOLATE_IP_", "")
+
+    # 중복 제거
+    seen = set()
+    unique_rules = []
+    for r in rules:
+        rule_name = r.get("규칙 이름", "")
+        if rule_name not in seen:
+            seen.add(rule_name)
+            unique_rules.append(r)
+    rules = unique_rules
+
+    # 위험도 매핑
+    risk_map = {}
+    for r in st.session_state.get("response_results", []):
+        proc = r.get("프로세스 이름", "")
+        ip = r.get("destination_ip", "")
+        risk = r.get("위험도", "")
+        if proc:
+            risk_map[proc] = risk
+        if ip:
+            risk_map[ip] = risk
+
+    for r in rules:
+        key = r.get("프로그램/IP", "")
+        r["위험도"] = risk_map.get(key, "-")
+
+    # 검색어 필터링
+    if search_query:
+        rules = [r for r in rules if search_query.lower() in str(r.get("규칙 이름", "")).lower() or
+                 search_query.lower() in str(r.get("프로그램/IP", "")).lower()]
+
+    if rules:
+        rules_df = pd.DataFrame([{
+            "프로그램/IP": r.get("프로그램/IP", ""),
+            "위험도": r.get("위험도", "-"),
+            "규칙 이름": r.get("규칙 이름", "")
+        } for r in rules])
+
+        selected = st.dataframe(
+            rules_df,
+            width="stretch",
+            hide_index=True,
+            height=200,
+            on_select="rerun",
+            selection_mode="single-row"
+        )
+
+        selected_rows = selected.selection.rows
+        if selected_rows:
+            idx = selected_rows[0]
+            rule_name = rules[idx].get("규칙 이름", "")
+
+            if st.button(f"차단 해제 - {rule_name}"):
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"],
+                    capture_output=True, text=True, encoding="utf-8", errors="ignore"
+                )
+                if rule_name.startswith("BLOCK_IP_"):
+                    ip = rule_name.replace("BLOCK_IP_", "")
+                    subprocess.run(["route", "delete", ip], capture_output=True, text=True, encoding="utf-8", errors="ignore")
+                elif rule_name.startswith("ISOLATE_IP_"):
+                    ip = rule_name.replace("ISOLATE_IP_", "")
+                    subprocess.run(["route", "delete", ip], capture_output=True, text=True, encoding="utf-8", errors="ignore")
+                st.rerun()
+    else:
+        st.info("차단된 프로세스/IP가 없습니다.")
 # ==================================================================
 # 하단 레이아웃 - 차트 배경 투명화 및 테두리 제거 (강력 조치)
 # ==================================================================
