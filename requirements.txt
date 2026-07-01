@@ -1,9 +1,15 @@
 streamlit
-requests
-altair
 pandas
+altair
+requests
 fastapi
 uvicorn
 sqlalchemy
+python-dotenv
 psycopg2-binary
+xgboost
+scikit-learn
+joblib
+numpy
+psutil
 pywin32

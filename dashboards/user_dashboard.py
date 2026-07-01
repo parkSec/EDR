@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import altair as alt
 import requests
@@ -519,24 +519,15 @@ with row2_col1:
             risk_df = log_df["위험도"].value_counts().reset_index()
             risk_df.columns = ["위험도", "건수"]
 
-            risk_label_map = {
-                "High": "높음",
-                "Medium": "중간",
-                "Low": "낮음",
-            }
-
-            risk_df["위험도"] = risk_df["위험도"].map(risk_label_map).fillna(risk_df["위험도"])
-
             chart = (
                 alt.Chart(risk_df)
                 .mark_arc(innerRadius=50)
                 .encode(
-                    theta=alt.Theta("건수:Q", title="건수"),
+                    theta="건수:Q",
                     color=alt.Color(
                         "위험도:N",
-                        title="위험도",
                         scale=alt.Scale(
-                            domain=["높음", "중간", "낮음"],
+                            domain=["High", "Medium", "Low"],
                             range=["#ef4444", "#f59e0b", "#3b82f6"],
                         ),
                     ),
@@ -557,31 +548,12 @@ with row2_col2:
             ai_df = log_df["AI 위험도"].fillna("Unknown").value_counts().reset_index()
             ai_df.columns = ["AI 위험도", "건수"]
 
-            ai_label_map = {
-                "Critical": "심각",
-                "High": "높음",
-                "Medium": "중간",
-                "Low": "낮음",
-                "Unknown": "미확인",
-            }
-
-            ai_df["AI 위험도"] = ai_df["AI 위험도"].map(ai_label_map).fillna(ai_df["AI 위험도"])
-
             chart = (
                 alt.Chart(ai_df)
                 .mark_bar()
                 .encode(
-                    x=alt.X(
-                        "건수:Q",
-                        title="건수",
-                        axis=alt.Axis(labelAngle=0),
-                    ),
-                    y=alt.Y(
-                        "AI 위험도:N",
-                        title=None,
-                        sort=["심각", "높음", "중간", "낮음", "미확인"],
-                        axis=alt.Axis(labelAngle=0),
-                    ),
+                    x=alt.X("AI 위험도:N", title="AI 위험도"),
+                    y=alt.Y("건수:Q", title="건수"),
                     tooltip=["AI 위험도", "건수"],
                 )
                 .properties(height=220, background="rgba(0,0,0,0)")
@@ -603,17 +575,8 @@ with row2_col3:
                 alt.Chart(type_df)
                 .mark_bar()
                 .encode(
-                    x=alt.X(
-                        "건수:Q",
-                        title="건수",
-                        axis=alt.Axis(labelAngle=0),
-                    ),
-                    y=alt.Y(
-                        "탐지 유형:N",
-                        title=None,
-                        sort="-x",
-                        axis=alt.Axis(labelAngle=0),
-                    ),
+                    x=alt.X("건수:Q", title="건수"),
+                    y=alt.Y("탐지 유형:N", title="탐지 유형", sort="-x"),
                     tooltip=["탐지 유형", "건수"],
                 )
                 .properties(height=220, background="rgba(0,0,0,0)")
