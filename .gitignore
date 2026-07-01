@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+chat_history.md
+GEMINI.md
+README.md
+collector/FILELESS_GUIDE.md
+docs/Code Line Code.md
+docs/WORK_LOG.md
