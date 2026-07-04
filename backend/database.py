@@ -81,6 +81,17 @@ class SysmonLog(Base):
     status = Column(String(20), default="신규")
     ai_score = Column(Float, nullable=True)
 
+class ResponseResult(Base):
+    __tablename__ = "response_results"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    response_time   = Column(DateTime, default=datetime.now)
+    risk_level      = Column(String(10))
+    process_name    = Column(String(200), nullable=True)
+    process_path    = Column(String(500), nullable=True)
+    destination_ip  = Column(String(50),  nullable=True)
+    response_method = Column(Text,        nullable=True)
+    status          = Column(String(20))
 
 def init_db():
     """DB 테이블이 없으면 생성한다."""
