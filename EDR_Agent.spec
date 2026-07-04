@@ -8,6 +8,7 @@ a = Analysis(
     datas=[
         ('dashboards', 'dashboards'),
         ('collector', 'collector'),
+        ('backend', 'backend'),
         ('.env', '.'),
         ('xgboost/xgboost_sysmon_model.json', 'xgboost'),
         ('xgboost/label_encoders.pkl', 'xgboost'),

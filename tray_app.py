@@ -13,9 +13,9 @@ import socket
 import sys
 import os
 import tkinter as tk
-from tkinter import simpledialog
 
 import pystray
+
 from PIL import Image, ImageDraw
 import requests
 
@@ -32,16 +32,84 @@ except Exception:
     _PREDICTOR_READY = False
 
 def _ask_server_ip() -> str:
+    BG       = "#0d1117"
+    PANEL    = "#161b22"
+    ACCENT   = "#0078d4"
+    FG       = "#e6edf3"
+    FG_SUB   = "#8b949e"
+    BORDER   = "#30363d"
+    BTN_HOV  = "#1f6feb"
+
+    result = {"ip": None}
+
     root = tk.Tk()
-    root.withdraw()
-    ip = simpledialog.askstring(
-        "서버 연결",
-        "서버 IP 주소를 입력하세요:\n(예: 192.168.0.10)",
-    )
-    root.destroy()
-    if not ip or not ip.strip():
+    root.title("EDR Agent")
+    root.configure(bg=BG)
+    root.resizable(False, False)
+
+    W, H = 400, 260
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
+    root.geometry(f"{W}x{H}+{(sw-W)//2}+{(sh-H)//2}")
+    root.overrideredirect(True)
+
+    # ── 타이틀바
+    bar = tk.Frame(root, bg=PANEL, height=36)
+    bar.pack(fill="x")
+    tk.Label(bar, text="  🛡  EDR Agent — 서버 연결",
+             bg=PANEL, fg=FG, font=("Segoe UI", 10, "bold")).pack(side="left", pady=8)
+    tk.Button(bar, text="✕", bg=PANEL, fg=FG_SUB,
+              relief="flat", bd=0, font=("Segoe UI", 11),
+              activebackground="#c0392b", activeforeground="white",
+              command=sys.exit).pack(side="right", padx=6)
+
+    def _drag_start(e): bar._x, bar._y = e.x, e.y
+    def _drag_move(e):  root.geometry(f"+{root.winfo_x()+e.x-bar._x}+{root.winfo_y()+e.y-bar._y}")
+    bar.bind("<ButtonPress-1>", _drag_start)
+    bar.bind("<B1-Motion>",     _drag_move)
+
+    # ── 본문
+    body = tk.Frame(root, bg=BG, padx=30, pady=20)
+    body.pack(fill="both", expand=True)
+
+    tk.Label(body, text="서버 IP 주소 입력",
+             bg=BG, fg=FG, font=("Segoe UI", 13, "bold")).pack(anchor="w")
+    tk.Label(body, text="관리자 PC의 IP 주소를 입력하세요.",
+             bg=BG, fg=FG_SUB, font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 16))
+
+    entry_frame = tk.Frame(body, bg=BORDER, bd=0)
+    entry_frame.pack(fill="x")
+    entry = tk.Entry(entry_frame, bg=PANEL, fg=FG, insertbackground=FG,
+                     relief="flat", font=("Consolas", 12), bd=8,
+                     highlightthickness=0)
+    entry.insert(0, "192.168.0.")
+    entry.pack(fill="x")
+    entry.focus_set()
+    entry.icursor("end")
+
+    tk.Label(body, text="예: 192.168.0.10",
+             bg=BG, fg=FG_SUB, font=("Segoe UI", 8)).pack(anchor="w", pady=(4, 16))
+
+    def _confirm(e=None):
+        val = entry.get().strip()
+        if val:
+            result["ip"] = val
+            root.destroy()
+
+    tk.Button(body, text="연결", bg=ACCENT, fg="white",
+              relief="flat", bd=0, font=("Segoe UI", 10, "bold"),
+              padx=20, pady=8, cursor="hand2",
+              activebackground=BTN_HOV, activeforeground="white",
+              command=_confirm).pack(fill="x")
+
+    root.bind("<Return>", _confirm)
+    root.bind("<Escape>", lambda e: sys.exit())
+
+    root.mainloop()
+
+    if not result["ip"]:
         sys.exit(0)
-    return ip.strip()
+    return result["ip"]
 
 SERVER_URL      = f"http://{_ask_server_ip()}:8000"
 DASHBOARD_PORT  = 8500
@@ -173,6 +241,8 @@ def _open_dashboard(icon, item):
                             os.path.join(root_dst, "dashboards"))
             shutil.copytree(os.path.join(sys._MEIPASS, "collector"),
                             os.path.join(root_dst, "collector"))
+            shutil.copytree(os.path.join(sys._MEIPASS, "backend"),
+                            os.path.join(root_dst, "backend"))
             dashboard = os.path.join(root_dst, "dashboards", "user_dashboard.py")
             python = shutil.which("python") or shutil.which("python3") or "python"
         else:
@@ -183,7 +253,7 @@ def _open_dashboard(icon, item):
         # 별도 프로세스로 실행 (스레드에서 실행 시 signal 핸들러 오류 발생)
         import ctypes
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        args = f'-m streamlit run "{dashboard}" --server.port {DASHBOARD_PORT} --server.headless true -- --server-url {SERVER_URL}'
+        args = f'-m streamlit run "{dashboard}" --server.port {DASHBOARD_PORT} --server.headless true'
         ctypes.windll.shell32.ShellExecuteW(
             None, "runas", python, args, base_dir, 1
         )
