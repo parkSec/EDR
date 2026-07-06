@@ -55,6 +55,7 @@ class LogItem(BaseModel):
 
     action_desc: Optional[str] = None
     process_name: Optional[str] = None
+    process_path: Optional[str] = None
 
     event_id: Optional[int] = None
     command_line: Optional[str] = None
@@ -128,6 +129,7 @@ def log_to_dict(log: SysmonLog):
         "technique_name": log.technique_name,
         "action_desc": log.action_desc,
         "process_name": log.process_name,
+        "process_path": getattr(log, "process_path", None),
         "event_id": log.event_id,
         "command_line": log.command_line,
         "destination_ip": log.destination_ip,
@@ -177,6 +179,7 @@ def create_logs(batch: LogBatch, db: Session = Depends(get_db)):
             technique_name=item.technique_name,
             action_desc=item.action_desc,
             process_name=item.process_name,
+            process_path = item.process_path,
             event_id=item.event_id,
             command_line=item.command_line,
             destination_ip=item.destination_ip,

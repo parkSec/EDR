@@ -71,6 +71,7 @@ class SysmonLog(Base):
 
     action_desc = Column(Text)
     process_name = Column(String(200))
+    process_path = Column(Text, nullable=True)
     event_id = Column(Integer)
 
     command_line = Column(Text, nullable=True)

@@ -416,58 +416,52 @@ def add_xgboost_prediction(logs):
 
 def apply_alert_policy(logs):
     """
-    AI가 과탐지할 수 있으므로 AI Critical만으로 무조건 알림 처리하지 않습니다.
-
     알림 조건:
-    1. 규칙 기반 risk가 High
-    2. 규칙 기반 risk가 Medium 이상이고 AI도 High/Critical
-    3. 규칙 기반 risk가 Medium 이상이고 AI 점수가 90점 이상
+    - AI 점수(ai_score)가 90점 이상일 때만 위험 알림 처리
+    - 90점 미만은 알림 소리/대시보드 위험 알림으로 올리지 않음
     """
     for log in logs:
-        risk = str(log.get("risk") or "")
-        ai_risk = str(log.get("ai_risk") or "")
         ai_score = log.get("ai_score")
 
         is_alert = False
-        alert_reasons = []
-
-        if risk == "High":
-            is_alert = True
-            alert_reasons.append("규칙 기반 High 위험도")
-
-        if risk in ["Medium", "High"] and ai_risk in ["High", "Critical"]:
-            is_alert = True
-            alert_reasons.append("규칙 기반 위험도와 AI 위험도 동시 탐지")
 
         try:
-            if (
-                risk in ["Medium", "High"]
-                and ai_score is not None
-                and float(ai_score) >= 90
-            ):
+            if ai_score is not None and float(ai_score) >= 90:
                 is_alert = True
-                alert_reasons.append("AI 점수 90점 이상")
         except Exception:
-            pass
+            is_alert = False
 
         if is_alert:
+            log["ai_risk"] = "Critical"
             log["status"] = "알림"
             log["rule_level"] = "중요"
 
-            reason_text = " / ".join(alert_reasons)
-
-            if reason_text and not str(log.get("action_desc", "")).startswith("[ALERT]"):
+            if not str(log.get("action_desc", "")).startswith("[ALERT]"):
                 log["action_desc"] = (
-                    "[ALERT] "
-                    + reason_text
-                    + " | "
-                    + str(log.get("action_desc"))
+                    "[ALERT] AI 점수 90점 이상 | "
+                    + str(log.get("action_desc", ""))
                 )
-
         else:
-            if risk == "Medium":
-                log["status"] = "의심"
-                log["rule_level"] = "주의"
+            # 90점 미만은 위험 알림으로 처리하지 않음
+            if ai_score is not None:
+                try:
+                    score = float(ai_score)
+
+                    if score >= 50:
+                        log["ai_risk"] = "High"
+                        log["status"] = "의심"
+                        log["rule_level"] = "주의"
+                    elif score >= 25:
+                        log["ai_risk"] = "Medium"
+                        log["status"] = "의심"
+                        log["rule_level"] = "주의"
+                    else:
+                        log["ai_risk"] = "Low"
+                        log["status"] = "신규"
+                        log["rule_level"] = "일반"
+                except Exception:
+                    log["status"] = "신규"
+                    log["rule_level"] = "일반"
             else:
                 log["status"] = "신규"
                 log["rule_level"] = "일반"
@@ -630,6 +624,7 @@ def collect_recent_logs():
             "technique_name": mitre.get("technique_name"),
             "action_desc": make_action_desc(event_id, message),
             "process_name": process_name,
+            "process_path": image,
             "event_id": event_id,
             "command_line": get_field(message, "CommandLine"),
             "destination_ip": get_field(message, "DestinationIp"),
@@ -845,4 +840,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[중지] Sysmon Collector를 정상 종료했습니다.")
