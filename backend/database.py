@@ -94,6 +94,14 @@ class ResponseResult(Base):
     response_method = Column(Text,        nullable=True)
     status          = Column(String(20))
 
+class ToggleState(Base):
+    __tablename__ = "toggle_state"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    auto_response = Column(Integer, default=1)  # 1=ON, 0=OFF
+    off_time     = Column(DateTime, nullable=True)
+    on_time      = Column(DateTime, nullable=True)
+
 def init_db():
     """DB 테이블이 없으면 생성한다."""
     Base.metadata.create_all(bind=engine)

@@ -1193,8 +1193,39 @@ with st.container(border=True):
             unsafe_allow_html=True
         )
 
+    # 토글 상태 DB에 저장
+    from backend.database import SessionLocal, ResponseResult, ToggleState
+    db = SessionLocal()
+    try:
+        toggle = db.query(ToggleState).first()
+        now = datetime.now()
+
+        if toggle is None:
+            # 처음 실행 시 생성
+            toggle = ToggleState(
+                auto_response=1 if auto_response else 0,
+                off_time=None if auto_response else now,
+                on_time=now if auto_response else None
+            )
+            db.add(toggle)
+        else:
+            prev_auto_response = toggle.auto_response
+
+            if not auto_response and prev_auto_response:
+                # ON → OFF
+                toggle.auto_response = 0
+                toggle.off_time = now
+            elif auto_response and not prev_auto_response:
+                # OFF → ON
+                toggle.auto_response = 1
+                toggle.on_time = now
+
+        db.commit()
+
+    finally:
+        db.close()
+
     # DB에서 결과 불러오기
-    from backend.database import SessionLocal, ResponseResult
     db = SessionLocal()
     try:
         rows = db.query(ResponseResult).order_by(ResponseResult.response_time.asc()).all()
