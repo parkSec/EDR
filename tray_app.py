@@ -253,7 +253,7 @@ def _open_dashboard(icon, item):
         # 별도 프로세스로 실행 (스레드에서 실행 시 signal 핸들러 오류 발생)
         import ctypes
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        args = f'-m streamlit run "{dashboard}" --server.port {DASHBOARD_PORT} --server.headless true'
+        args = f'-m streamlit run "{dashboard}" --server.port {DASHBOARD_PORT} --server.headless true -- --server-url {SERVER_URL}'
         ctypes.windll.shell32.ShellExecuteW(
             None, "runas", python, args, base_dir, 1
         )

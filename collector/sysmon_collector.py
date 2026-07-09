@@ -547,6 +547,7 @@ $result | ConvertTo-Json -Depth 5
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
         if result.returncode != 0:

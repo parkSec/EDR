@@ -85,7 +85,8 @@ def collect_powershell_events(hours: int = 1) -> List[Dict]:
             ["powershell", "-NoProfile", "-Command", ps_command],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         
         if result.returncode == 0 and result.stdout.strip():
@@ -252,7 +253,8 @@ def detect_background_powershell() -> List[Dict]:
             ["powershell", "-NoProfile", "-Command", ps_command],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         
         if result.returncode == 0 and result.stdout.strip():
