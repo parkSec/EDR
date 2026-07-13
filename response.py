@@ -1,7 +1,22 @@
 import subprocess
 import psutil
-import json
+import time
 from datetime import datetime
+from backend.database import SessionLocal, ResponseResult, SysmonLog, ToggleState
+
+
+def load_toggle_state():
+    db = SessionLocal()
+    try:
+        toggle = db.query(ToggleState).first()
+        if toggle is None:
+            return {"auto_response": True, "on_time": None}
+        return {
+            "auto_response": bool(toggle.auto_response),
+            "on_time": toggle.on_time
+        }
+    finally:
+        db.close()
 
 
 def kill_process(process_path):
@@ -71,29 +86,37 @@ def manual_response(process_path, destination_ip):
     response_methods = []
     status = "처리 완료"
 
+    process_blocked = False
+    ip_blocked = False
+
     if process_path:
         success = block_process_network(process_path)
         kill_process(process_path)
-        response_methods.append("프로세스 네트워크 차단")
-
         if not success:
             status = "처리 실패"
+        else:
+            process_blocked = True
     else:
         status = "처리 실패"
-        response_methods.append("프로세스 경로 없음")
 
     if destination_ip:
         success = block_ip(destination_ip)
-        response_methods.append("IP 차단")
-
         if not success:
             status = "처리 실패"
-
         success = isolate_ip(destination_ip)
-        response_methods.append("IP 격리")
-
         if not success:
             status = "처리 실패"
+        else:
+            ip_blocked = True
+
+    if process_blocked and ip_blocked:
+        response_methods.append("프로세스/IP 차단")
+    elif process_blocked:
+        response_methods.append("프로세스 차단")
+    elif ip_blocked:
+        response_methods.append("IP 차단")
+    else:
+        response_methods.append("차단 실패")
 
     return response_methods, status
 
@@ -119,33 +142,37 @@ def response_by_risk(
 
     elif risk_level == "High":
 
+        process_blocked = False
+        ip_blocked = False
+
         if process_path:
             success = block_process_network(process_path)
             kill_process(process_path)
-            response_methods.append("프로세스 네트워크 차단")
-
             if not success:
                 status = "처리 실패"
-
+            else:
+                process_blocked = True
         else:
             status = "처리 실패"
-            response_methods.append("프로세스 경로 없음")
 
         if destination_ip:
             success = block_ip(destination_ip)
-            response_methods.append("IP 차단")
-
             if not success:
                 status = "처리 실패"
-
             success = isolate_ip(destination_ip)
-            response_methods.append("IP 격리")
-
             if not success:
                 status = "처리 실패"
+            else:
+                ip_blocked = True
 
+        if process_blocked and ip_blocked:
+            response_methods.append("프로세스/IP 차단")
+        elif process_blocked:
+            response_methods.append("프로세스 차단")
+        elif ip_blocked:
+            response_methods.append("IP 차단")
         else:
-            response_methods.append("차단된 IP 없음")
+            response_methods.append("차단 실패")
 
     response_result = {
         "대응 시간": response_time,
@@ -160,53 +187,92 @@ def response_by_risk(
     return response_result
 
 
-def load_and_respond():
-    """test_data.json 읽어서 대응 실행, 결과를 response_results.json에 저장"""
+def load_and_respond(on_time=None):
+    """sysmon_logs DB에서 읽어서 대응 실행, 결과를 DB에 저장"""
 
-    # 기존 결과 불러오기
+    db = SessionLocal()
+
     try:
-        with open("response_results.json", "r", encoding="utf-8") as f:
-            existing_results = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        existing_results = []
-
-    # 중복 체크용 set
-    processed_set = set(
-        (r.get("process_path"), r.get("destination_ip"))
-        for r in existing_results
-    )
-
-    # test_data.json 읽기
-    try:
-        with open("test_data.json", "r", encoding="utf-8") as f:
-            test_data = json.load(f)
-    except FileNotFoundError:
-        return
-
-    new_results = []
-    for item in test_data:
-        process_path = item.get("process_path")
-        destination_ip = item.get("destination_ip")
-        key = (process_path, destination_ip)
-
-        if key in processed_set:
-            continue
-
-        result = response_by_risk(
-            risk_level=item["risk_level"],
-            process_path=process_path,
-            destination_ip=destination_ip
+        # 중복 체크용 set (DB에서 기존 결과 불러오기)
+        existing = db.query(ResponseResult).all()
+        processed_set = set(
+            (r.process_path, r.destination_ip)
+            for r in existing
         )
 
-        if result:
-            new_results.append(result)
-            processed_set.add(key)
+        # sysmon_logs에서 ai_risk가 Critical 또는 High인 것만 가져오기
+        query = db.query(SysmonLog).filter(
+            SysmonLog.ai_risk.in_(["Critical", "High"])
+        )
 
-    # 결과 저장
-    all_results = existing_results + new_results
-    with open("response_results.json", "w", encoding="utf-8") as f:
-        json.dump(all_results, f, ensure_ascii=False, indent=2)
+        # ON 시간 이후 로그만 가져오기
+        if on_time:
+            query = query.filter(SysmonLog.recv_time > on_time)
+
+        logs = query.all()
+
+        for log in logs:
+            process_path = log.process_path
+            destination_ip = log.destination_ip
+            key = (process_path, destination_ip)
+
+            if key in processed_set:
+                continue
+
+            # ai_risk에 따라 위험도 결정
+            if log.ai_risk == "Critical":
+                risk_level = "High"
+            elif log.ai_risk == "High":
+                risk_level = "Medium"
+            else:
+                risk_level = "Low"
+
+            result = response_by_risk(
+                risk_level=risk_level,
+                process_path=process_path,
+                destination_ip=destination_ip
+            )
+
+            if result:
+                db.add(ResponseResult(
+                    response_time   = datetime.strptime(result["대응 시간"], "%Y-%m-%d %H:%M:%S"),
+                    risk_level      = result["위험도"],
+                    process_name    = result["프로세스 이름"],
+                    process_path    = result["process_path"],
+                    destination_ip  = result["destination_ip"],
+                    response_method = result["대응 방법"],
+                    status          = result["대응 현황"]
+                ))
+                processed_set.add(key)
+
+        db.commit()
+
+    finally:
+        db.close()
+
+
+def main():
+    print("자동 대응 모듈 시작")
+    while True:
+        try:
+            toggle = load_toggle_state()
+            auto_response = toggle.get("auto_response", True)
+            on_time = toggle.get("on_time", None)
+
+            if auto_response:
+                print("자동 대응 실행 중...")
+                load_and_respond(on_time=on_time)
+            else:
+                print("자동 대응 중지")
+
+            time.sleep(5)
+
+        except KeyboardInterrupt:
+            print("자동 대응 종료")
+            break
+        except Exception as e:
+            print("[오류]", e)
 
 
 if __name__ == "__main__":
-    load_and_respond()
+    main()

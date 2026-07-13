@@ -242,7 +242,7 @@ class ThreatPredictor:
                 risk_label = "Low"
             elif proba < 0.50:
                 risk_label = "Medium"
-            elif proba < 0.75:
+            elif proba < 0.90:
                 risk_label = "High"
             else:
                 risk_label = "Critical"

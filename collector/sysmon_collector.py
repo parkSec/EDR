@@ -28,10 +28,22 @@ ALERT_LOG_FILE = Path(__file__).resolve().parent / "alert_logs.jsonl"
 XGBOOST_DIR = BASE_DIR / "xgboost"
 sys.path.insert(0, str(XGBOOST_DIR))
 
+# collector/ 폴더를 sys.path에 추가해 fileless_detector 임포트 허용
+_COLLECTOR_DIR = str(Path(__file__).resolve().parent)
+if _COLLECTOR_DIR not in sys.path:
+    sys.path.insert(0, _COLLECTOR_DIR)
+
 
 # ============================================================
 # XGBoost 모델 로드
 # ============================================================
+
+try:
+    from fileless_detector import detect_fileless_threats as _detect_fileless
+    FILELESS_READY = True
+except ImportError:
+    FILELESS_READY = False
+    _detect_fileless = None
 
 try:
     from threat_predictor import ThreatPredictor
@@ -404,58 +416,52 @@ def add_xgboost_prediction(logs):
 
 def apply_alert_policy(logs):
     """
-    AI가 과탐지할 수 있으므로 AI Critical만으로 무조건 알림 처리하지 않습니다.
-
     알림 조건:
-    1. 규칙 기반 risk가 High
-    2. 규칙 기반 risk가 Medium 이상이고 AI도 High/Critical
-    3. 규칙 기반 risk가 Medium 이상이고 AI 점수가 90점 이상
+    - AI 점수(ai_score)가 90점 이상일 때만 위험 알림 처리
+    - 90점 미만은 알림 소리/대시보드 위험 알림으로 올리지 않음
     """
     for log in logs:
-        risk = str(log.get("risk") or "")
-        ai_risk = str(log.get("ai_risk") or "")
         ai_score = log.get("ai_score")
 
         is_alert = False
-        alert_reasons = []
-
-        if risk == "High":
-            is_alert = True
-            alert_reasons.append("규칙 기반 High 위험도")
-
-        if risk in ["Medium", "High"] and ai_risk in ["High", "Critical"]:
-            is_alert = True
-            alert_reasons.append("규칙 기반 위험도와 AI 위험도 동시 탐지")
 
         try:
-            if (
-                risk in ["Medium", "High"]
-                and ai_score is not None
-                and float(ai_score) >= 90
-            ):
+            if ai_score is not None and float(ai_score) >= 90:
                 is_alert = True
-                alert_reasons.append("AI 점수 90점 이상")
         except Exception:
-            pass
+            is_alert = False
 
         if is_alert:
+            log["ai_risk"] = "Critical"
             log["status"] = "알림"
             log["rule_level"] = "중요"
 
-            reason_text = " / ".join(alert_reasons)
-
-            if reason_text and not str(log.get("action_desc", "")).startswith("[ALERT]"):
+            if not str(log.get("action_desc", "")).startswith("[ALERT]"):
                 log["action_desc"] = (
-                    "[ALERT] "
-                    + reason_text
-                    + " | "
-                    + str(log.get("action_desc"))
+                    "[ALERT] AI 점수 90점 이상 | "
+                    + str(log.get("action_desc", ""))
                 )
-
         else:
-            if risk == "Medium":
-                log["status"] = "의심"
-                log["rule_level"] = "주의"
+            # 90점 미만은 위험 알림으로 처리하지 않음
+            if ai_score is not None:
+                try:
+                    score = float(ai_score)
+
+                    if score >= 50:
+                        log["ai_risk"] = "High"
+                        log["status"] = "의심"
+                        log["rule_level"] = "주의"
+                    elif score >= 25:
+                        log["ai_risk"] = "Medium"
+                        log["status"] = "의심"
+                        log["rule_level"] = "주의"
+                    else:
+                        log["ai_risk"] = "Low"
+                        log["status"] = "신규"
+                        log["rule_level"] = "일반"
+                except Exception:
+                    log["status"] = "신규"
+                    log["rule_level"] = "일반"
             else:
                 log["status"] = "신규"
                 log["rule_level"] = "일반"
@@ -541,6 +547,7 @@ $result | ConvertTo-Json -Depth 5
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
         if result.returncode != 0:
@@ -618,6 +625,7 @@ def collect_recent_logs():
             "technique_name": mitre.get("technique_name"),
             "action_desc": make_action_desc(event_id, message),
             "process_name": process_name,
+            "process_path": image,
             "event_id": event_id,
             "command_line": get_field(message, "CommandLine"),
             "destination_ip": get_field(message, "DestinationIp"),
@@ -689,6 +697,69 @@ def send_logs_to_fastapi(logs):
     except Exception as e:
         print("[FastAPI 연결 실패]", e)
         return False
+
+
+# ============================================================
+# Fileless 로그 수집 및 통합
+# ============================================================
+
+def collect_fileless_logs() -> list:
+    if not FILELESS_READY or _detect_fileless is None:
+        return []
+    try:
+        threats = _detect_fileless(hours=1)
+    except Exception:
+        return []
+
+    logs = []
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    host_ip = get_local_ip()
+    os_name = platform.platform()
+    risk_map = {"H": "High", "M": "Medium", "L": "Low"}
+
+    for t in threats:
+        risk = risk_map.get(t.get("risk_level", "M"), "Medium")
+        log = {
+            "recv_time": now_str,
+            "gen_time": str(t.get("timestamp", now_str)),
+            "host_ip": host_ip,
+            "os_name": os_name,
+            "rule_level": "중요" if risk == "High" else "주의",
+            "risk": risk,
+            "detect_type": "Fileless 공격",
+            "tactic_id": "TA0005",
+            "tactic_name": "Defense Evasion",
+            "technique_id": "T1059.001",
+            "technique_name": "PowerShell",
+            "action_desc": t.get("description", "Fileless PowerShell 탐지"),
+            "process_name": "powershell.exe",
+            "event_id": t.get("event_id", 4104),
+            "command_line": t.get("command_snippet", ""),
+            "destination_ip": "",
+            "destination_port": "",
+            "query_name": "",
+            "status": "알림" if risk == "High" else "의심",
+            "_record_id": 0,
+            "process_id": "",
+            "parent_process_id": "",
+            "image": "",
+            "user": "",
+            "parent_image": "",
+            "source_ip": "",
+            "source_port": "",
+            "ai_score": None,
+            "ai_risk": "Unknown",
+        }
+        logs.append(log)
+
+    return logs
+
+
+def collect_all_logs() -> list:
+    """Sysmon 일반 로그 + Fileless 탐지 로그 통합 수집"""
+    logs = collect_recent_logs()
+    logs += collect_fileless_logs()
+    return logs
 
 
 # ============================================================
@@ -770,4 +841,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[중지] Sysmon Collector를 정상 종료했습니다.")
