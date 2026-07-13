@@ -41,7 +41,11 @@ def block_process_network(process_path):
             f"program={process_path}",
             "enable=yes"
         ]
-        result = subprocess.run(cmd, shell=False, capture_output=True, text=True, encoding="utf-8", errors="ignore")
+        result = subprocess.run(
+            cmd, shell=False, capture_output=True, text=True,
+            encoding="utf-8", errors="ignore",
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
 
         if result.returncode != 0:
             return False
@@ -61,7 +65,11 @@ def block_ip(ip_address):
         "enable=yes"
     ]
 
-    result = subprocess.run(cmd, shell=False, capture_output=True, text=True, encoding="utf-8", errors="ignore")
+    result = subprocess.run(
+        cmd, shell=False, capture_output=True, text=True,
+        encoding="utf-8", errors="ignore",
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
     return result.returncode == 0
 
 
@@ -71,7 +79,11 @@ def isolate_ip(ip_address):
         "mask", "255.255.255.255",
         "0.0.0.0"
     ]
-    result = subprocess.run(cmd, shell=False, capture_output=True, text=True, encoding="utf-8", errors="ignore")
+    result = subprocess.run(
+        cmd, shell=False, capture_output=True, text=True,
+        encoding="utf-8", errors="ignore",
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
     return result.returncode == 0
 
 

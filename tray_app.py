@@ -5,8 +5,6 @@ tray_app.py - EDR 시스템 트레이 앱
 
 import threading
 import subprocess
-import shutil
-import tempfile
 import webbrowser
 import time
 import socket
@@ -30,6 +28,9 @@ try:
 except Exception:
     _predictor = None
     _PREDICTOR_READY = False
+
+# 대시보드 자식 프로세스로 재실행된 경우 (자기 자신의 EXE를 재호출)
+_IS_DASHBOARD_CHILD = "--run-dashboard" in sys.argv
 
 def _ask_server_ip() -> str:
     BG       = "#0d1117"
@@ -111,7 +112,7 @@ def _ask_server_ip() -> str:
         sys.exit(0)
     return result["ip"]
 
-SERVER_URL      = f"http://{_ask_server_ip()}:8000"
+SERVER_URL      = "" if _IS_DASHBOARD_CHILD else f"http://{_ask_server_ip()}:8000"
 DASHBOARD_PORT  = 8500
 INTERVAL_SEC    = 10
 MAX_RECORDS     = 100
@@ -120,6 +121,7 @@ HOST_IP         = socket.gethostbyname(socket.gethostname())
 _agent_running     = False
 _agent_thread      = None
 _dashboard_started = False
+_dashboard_pid     = None
 
 
 
@@ -227,37 +229,92 @@ def _stop_agent(icon, item):
     _update_menu(icon)
 
 
+def _run_elevated_tracked(exe_path: str, args: str, base_dir: str):
+    """runas로 프로세스를 실행하고 PID를 반환한다 (종료 시 추적용)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class SHELLEXECUTEINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize",       wintypes.DWORD),
+            ("fMask",        ctypes.c_ulong),
+            ("hwnd",         wintypes.HWND),
+            ("lpVerb",       wintypes.LPCWSTR),
+            ("lpFile",       wintypes.LPCWSTR),
+            ("lpParameters", wintypes.LPCWSTR),
+            ("lpDirectory",  wintypes.LPCWSTR),
+            ("nShow",        ctypes.c_int),
+            ("hInstApp",     wintypes.HINSTANCE),
+            ("lpIDList",     ctypes.c_void_p),
+            ("lpClass",      wintypes.LPCWSTR),
+            ("hKeyClass",    wintypes.HANDLE),
+            ("dwHotKey",     wintypes.DWORD),
+            ("hIcon",        wintypes.HANDLE),
+            ("hProcess",     wintypes.HANDLE),
+        ]
+
+    SEE_MASK_NOCLOSEPROCESS = 0x00000040
+
+    sei = SHELLEXECUTEINFO()
+    sei.cbSize = ctypes.sizeof(sei)
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS
+    sei.lpVerb = "runas"
+    sei.lpFile = exe_path
+    sei.lpParameters = args
+    sei.lpDirectory = base_dir
+    sei.nShow = 1
+
+    ok = ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei))
+    if not ok or not sei.hProcess:
+        return None
+
+    pid = ctypes.windll.kernel32.GetProcessId(sei.hProcess)
+    ctypes.windll.kernel32.CloseHandle(sei.hProcess)
+    return pid
+
+
+def _launch_dashboard_inprocess():
+    """자식 프로세스(--run-dashboard)에서 streamlit을 내부 호출로 직접 실행한다.
+    외부 시스템 Python에 의존하지 않는다."""
+    if getattr(sys, "frozen", False):
+        dashboard = os.path.join(sys._MEIPASS, "dashboards", "user_dashboard.py")
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+        dashboard = os.path.join(base, "dashboards", "user_dashboard.py")
+
+    idx = sys.argv.index("--run-dashboard")
+    forwarded_args = sys.argv[idx + 1:]
+
+    # PyInstaller로 번들되면 streamlit 파일 경로에 site-packages가 없어
+    # developmentMode가 자동으로 켜지며 --server.port와 충돌한다. 강제로 끈다.
+    os.environ["STREAMLIT_GLOBAL_DEVELOPMENT_MODE"] = "false"
+
+    from streamlit.web import cli as stcli
+    sys.argv = ["streamlit", "run", dashboard] + forwarded_args
+    stcli.main()
+
+
 def _open_dashboard(icon, item):
-    global _dashboard_started
+    global _dashboard_started, _dashboard_pid
 
     if not _dashboard_started:
+        # 외부 Python을 찾지 않고 자기 자신(EXE 또는 현재 인터프리터)을 재실행
         if getattr(sys, "frozen", False):
-            # exe 실행 시: dashboards + collector를 임시폴더에 꺼내고 시스템 Python으로 실행
-            root_dst = os.path.join(tempfile.gettempdir(), "edr_root")
-            if os.path.exists(root_dst):
-                shutil.rmtree(root_dst)
-            os.makedirs(root_dst)
-            shutil.copytree(os.path.join(sys._MEIPASS, "dashboards"),
-                            os.path.join(root_dst, "dashboards"))
-            shutil.copytree(os.path.join(sys._MEIPASS, "collector"),
-                            os.path.join(root_dst, "collector"))
-            shutil.copytree(os.path.join(sys._MEIPASS, "backend"),
-                            os.path.join(root_dst, "backend"))
-            dashboard = os.path.join(root_dst, "dashboards", "user_dashboard.py")
-            python = shutil.which("python") or shutil.which("python3") or "python"
+            exe_path = sys.executable
+            base_dir = os.path.dirname(sys.executable)
+            script_prefix = ""
         else:
-            base = os.path.dirname(os.path.abspath(__file__))
-            dashboard = os.path.join(base, "dashboards", "user_dashboard.py")
-            python = sys.executable
+            exe_path = sys.executable
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            script_prefix = f'"{os.path.abspath(__file__)}" '
 
-        # 별도 프로세스로 실행 (스레드에서 실행 시 signal 핸들러 오류 발생)
-        import ctypes
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        args = f'-m streamlit run "{dashboard}" --server.port {DASHBOARD_PORT} --server.headless true -- --server-url {SERVER_URL}'
-        ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", python, args, base_dir, 1
-        )
+        args = f'{script_prefix}--run-dashboard --server.port {DASHBOARD_PORT} --server.headless true -- --server-url {SERVER_URL}'
+        pid = _run_elevated_tracked(exe_path, args, base_dir)
 
+        if not pid:
+            return  # 실행 실패 시 다음 클릭에서 재시도 가능하도록 플래그를 세우지 않음
+
+        _dashboard_pid = pid
         _dashboard_started = True
         time.sleep(2)
 
@@ -267,6 +324,17 @@ def _open_dashboard(icon, item):
 def _quit_app(icon, item):
     global _agent_running
     _agent_running = False
+
+    if _dashboard_pid:
+        try:
+            import psutil
+            parent = psutil.Process(_dashboard_pid)
+            for child in parent.children(recursive=True):
+                child.kill()
+            parent.kill()
+        except Exception:
+            pass
+
     icon.stop()
 
 
@@ -322,5 +390,8 @@ def _require_admin():
         sys.exit(0)
 
 if __name__ == "__main__":
-    _require_admin()
-    main()
+    if _IS_DASHBOARD_CHILD:
+        _launch_dashboard_inprocess()
+    else:
+        _require_admin()
+        main()
