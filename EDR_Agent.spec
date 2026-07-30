@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+
+streamlit_extra = collect_data_files('streamlit') + copy_metadata('streamlit')
+altair_extra = collect_data_files('altair') + copy_metadata('altair')
 
 a = Analysis(
     ['tray_app.py'],
@@ -13,8 +17,17 @@ a = Analysis(
         ('xgboost/xgboost_sysmon_model.json', 'xgboost'),
         ('xgboost/label_encoders.pkl', 'xgboost'),
         ('xgboost/threat_predictor.py', 'xgboost'),
+    ] + streamlit_extra + altair_extra,
+    hiddenimports=[
+        'streamlit',
+        'streamlit.web.cli',
+        'streamlit.runtime.scriptrunner.magic_funcs',
+        'altair',
+        'pandas',
+        'sqlalchemy',
+        'psycopg2',
+        'dotenv',
     ],
-    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
