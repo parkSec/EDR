@@ -147,6 +147,10 @@ class ThreatPredictor:
                 "status",
                 "ai_score",
                 "ai_risk",
+                "attack_stage",
+                "attack_path",
+                "ai_reason",
+                "final_score",
             ]
 
             for col in cols_to_drop:

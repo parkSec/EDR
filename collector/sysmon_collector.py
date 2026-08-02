@@ -100,7 +100,47 @@ MITRE_MAP = {
         "technique_name": "DNS",
     },
 }
+ATTACK_STAGE_MAP = {
+    "Execution": "실행",
+    "Persistence": "지속성 확보",
+    "Privilege Escalation": "권한 상승",
+    "Defense Evasion": "방어 우회",
+    "Credential Access": "자격 증명 탈취",
+    "Discovery": "시스템 탐색",
+    "Lateral Movement": "내부 이동",
+    "Collection": "정보 수집",
+    "Command and Control": "명령 및 제어",
+    "Exfiltration": "데이터 유출",
+    "Impact": "시스템 영향"
+}
 
+
+def get_attack_stage(tactic):
+    return ATTACK_STAGE_MAP.get(tactic, "Unknown")
+
+
+def build_ai_reason(log):
+    reasons = []
+
+    if log["event_id"] == 1:
+        reasons.append("Process Create")
+
+    elif log["event_id"] == 3:
+        reasons.append("Network Connection")
+
+    elif log["event_id"] == 5:
+        reasons.append("Process Terminated")
+
+    elif log["event_id"] == 22:
+        reasons.append("DNS Query")
+
+    if log.get("risk") == "High":
+        reasons.append("Rule Based Detection")
+
+    if log.get("ai_score") is not None:
+        reasons.append(f"AI Score {log['ai_score']}")
+
+    return ", ".join(reasons)
 
 # ============================================================
 # 상태 파일 관리
@@ -386,6 +426,8 @@ def add_xgboost_prediction(logs):
         for log in logs:
             log["ai_score"] = None
             log["ai_risk"] = "Unknown"
+            log["final_score"] = 0
+            log["ai_reason"] = "Prediction Disabled"
 
         return logs
 
@@ -398,14 +440,19 @@ def add_xgboost_prediction(logs):
                 probability = float(result.get("probability", 0.0))
                 log["ai_score"] = round(probability * 100, 2)
                 log["ai_risk"] = result.get("risk_label", "Unknown")
+                log["final_score"] = log["ai_score"]
+                log["ai_reason"] = build_ai_reason(log)
             else:
                 log["ai_score"] = None
                 log["ai_risk"] = "Unknown"
-
+                log["final_score"] = 0
+                log["ai_reason"] = "Prediction Failed"
         except Exception as e:
             print("[XGBoost 예측 실패]", e)
             log["ai_score"] = None
             log["ai_risk"] = "Unknown"
+            log["final_score"] = 0
+            log["ai_reason"] = "Prediction Failed"
 
     return logs
 
@@ -642,9 +689,18 @@ def collect_recent_logs():
             "parent_image": parent_image,
             "source_ip": get_field(message, "SourceIp"),
             "source_port": get_field(message, "SourcePort"),
+            "attack_stage":"",
+            "attack_path":"",
+            "ai_reason":"",
+            "final_score":0,
         }
 
         log = calculate_rule_score(log)
+
+        log["attack_stage"]=get_attack_stage(log["tactic_name"])
+
+        log["attack_path"]=log["attack_stage"]
+
         logs.append(log)
 
     return logs
@@ -749,6 +805,10 @@ def collect_fileless_logs() -> list:
             "source_port": "",
             "ai_score": None,
             "ai_risk": "Unknown",
+            "attack_stage": "Defense Evasion",
+            "attack_path": "PowerShell Fileless Attack",
+            "ai_reason": "",
+            "final_score": 0,
         }
         logs.append(log)
 

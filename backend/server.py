@@ -63,6 +63,11 @@ class LogItem(BaseModel):
     destination_port: Optional[str] = None
     query_name: Optional[str] = None
 
+    attack_stage: Optional[str] = None
+    attack_path: Optional[str] = None
+    ai_reason: Optional[str] = None
+    final_score: Optional[float] = None
+
     status: Optional[str] = "신규"
 
 
@@ -136,6 +141,10 @@ def log_to_dict(log: SysmonLog):
         "destination_port": log.destination_port,
         "query_name": log.query_name,
         "status": log.status,
+        "attack_stage": log.attack_stage,
+        "attack_path": log.attack_path,
+        "ai_reason": log.ai_reason,
+        "final_score": log.final_score,
     }
 
 
@@ -186,6 +195,10 @@ def create_logs(batch: LogBatch, db: Session = Depends(get_db)):
             destination_port=item.destination_port,
             query_name=item.query_name,
             status=item.status,
+            attack_stage=item.attack_stage,
+            attack_path=item.attack_path,
+            ai_reason=item.ai_reason,
+            final_score=item.final_score,
         )
 
         db.add(log)

@@ -54,6 +54,10 @@ def load_logs(limit=5000):
                 "destination_port": "DestinationPort",
                 "query_name": "QueryName",
                 "status": "상태",
+                "attack_stage": "공격 단계",
+                "attack_path": "공격 경로",
+                "ai_reason": "AI 분석",
+                "final_score": "최종 점수",
             }
         )
 
@@ -82,6 +86,7 @@ def make_admin_table(df):
         "EventID",
         "Tactic ID",
         "Tactic Name",
+        "공격 단계",
         "Technique ID",
         "Technique Name",
         "행위 내용",
@@ -181,25 +186,38 @@ if "상태" in log_df.columns:
     alert_count = len(log_df[log_df["상태"] == "알림"])
 
 high_count = 0
-medium_count = 0
-low_count = 0
+
 
 if "위험도" in log_df.columns:
     high_count = len(log_df[log_df["위험도"] == "High"])
-    medium_count = len(log_df[log_df["위험도"] == "Medium"])
-    low_count = len(log_df[log_df["위험도"] == "Low"])
+
+critical_count = 0
+
+if "AI 위험도" in log_df.columns:
+    critical_count = len(
+        log_df[log_df["AI 위험도"] == "Critical"]
+    )
+
+avg_score = 0
+
+if "최종 점수" in log_df.columns:
+    avg_score = round(
+        log_df["최종 점수"].fillna(0).mean(),
+        1
+    )
 
 ai_high_count = 0
 if "AI 위험도" in log_df.columns:
     ai_high_count = len(log_df[log_df["AI 위험도"].isin(["High", "Critical"])])
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 col1.metric("전체 로그", f"{total_count:,}")
 col2.metric("알람", f"{alert_count:,}")
 col3.metric("High", f"{high_count:,}")
-col4.metric("Medium", f"{medium_count:,}")
-col5.metric("AI High/Critical", f"{ai_high_count:,}")
+col4.metric("Critical", f"{critical_count:,}")
+col5.metric("AI 평균점수", avg_score)
+col6.metric("AI High/Critical", f"{ai_high_count:,}")
 
 st.divider()
 
@@ -266,7 +284,7 @@ if "로그 수신 날짜" in filtered_df.columns:
         & (filtered_df["로그 수신 날짜"] < end_datetime)
     ]
 
-filter_col1, filter_col2, filter_col3 = st.columns(3)
+filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
 
 with filter_col1:
     if "룰 레벨" in filtered_df.columns:
@@ -304,6 +322,20 @@ with filter_col3:
         default=ai_options,
     )
 
+with filter_col4:
+    if "공격 단계" in filtered_df.columns:
+        attack_options = sorted(
+            filtered_df["공격 단계"].dropna().unique().tolist()
+        )
+    else:
+        attack_options = []
+
+    selected_attacks = st.multiselect(
+        "공격 단계",
+        attack_options,
+        default=attack_options,
+    )
+
 if selected_levels and "룰 레벨" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["룰 레벨"].isin(selected_levels)]
 
@@ -312,7 +344,10 @@ if selected_risks and "위험도" in filtered_df.columns:
 
 if selected_ai_risks and "AI 위험도" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["AI 위험도"].isin(selected_ai_risks)]
-
+if selected_attacks and "공격 단계" in filtered_df.columns:
+    filtered_df = filtered_df[
+        filtered_df["공격 단계"].isin(selected_attacks)
+    ]
 event_df = make_admin_table(filtered_df)
 
 if search_text and not event_df.empty:

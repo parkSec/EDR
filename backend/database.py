@@ -81,6 +81,10 @@ class SysmonLog(Base):
 
     status = Column(String(20), default="신규")
     ai_score = Column(Float, nullable=True)
+    attack_stage = Column(String(100), nullable=True)
+    attack_path = Column(Text, nullable=True)
+    ai_reason = Column(Text, nullable=True)
+    final_score = Column(Float, nullable=True)
 
 class ResponseResult(Base):
     __tablename__ = "response_results"

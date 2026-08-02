@@ -232,6 +232,10 @@ def normalize_log_df(data):
             "destination_port": "DestinationPort",
             "query_name": "QueryName",
             "status": "상태",
+            "attack_stage": "공격 단계",
+            "attack_path": "공격 경로",
+            "ai_reason": "AI 분석",
+            "final_score": "최종 점수",
         }
     )
 
@@ -571,6 +575,9 @@ def get_alert_history_df():
             "AI 위험도 점수",
             "AI 위험도",
             "탐지 유형",
+            "공격 단계",
+            "공격 경로",
+            "Technique Name",
             "EventID",
             "프로세스",
             "행위 내용",
@@ -888,6 +895,7 @@ def _calc_stats(df):
             "low": 0,
             "critical": 0,
             "alert": 0,
+            "avg_ai_score": 0,
         }
 
     total = len(df)
@@ -912,15 +920,25 @@ def _calc_stats(df):
                 & (score_series >= CRITICAL_SCORE_THRESHOLD)
             ]
         )
+    avg_ai_score = 0
+
+    if score_col:
+        avg_ai_score = round(
+        pd.to_numeric(df[score_col], errors="coerce")
+        .fillna(0)
+        .mean(),
+        1,
+    )
 
     return {
-        "total": total,
-        "high": high_cnt,
-        "medium": med_cnt,
-        "low": low_cnt,
-        "critical": critical_cnt,
-        "alert": alert_cnt,
-    }
+    "total": total,
+    "high": high_cnt,
+    "medium": med_cnt,
+    "low": low_cnt,
+    "critical": critical_cnt,
+    "alert": alert_cnt,
+    "avg_ai_score": avg_ai_score,
+}
 
 
 # ==================================================================
@@ -929,6 +947,7 @@ def _calc_stats(df):
 
 @st.dialog("알람 발생 내역", width="large")
 def show_alarm_history():
+
     alert_df = get_alert_history_df()
 
     if alert_df.empty:
@@ -937,12 +956,56 @@ def show_alarm_history():
 
     st.warning(f"알람 내역 {len(alert_df)}건")
 
-    st.dataframe(
+    selected = st.dataframe(
         alert_df,
         use_container_width=True,
-        height=450,
         hide_index=True,
+        height=350,
+        on_select="rerun",
+        selection_mode="single-row"
     )
+
+    rows = selected.selection.rows
+
+    if rows:
+
+        idx = rows[0]
+        row = alert_df.iloc[idx]
+
+        st.divider()
+        st.subheader("상세 분석")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.markdown(f"**프로세스**  \n{row.get('프로세스','-')}")
+            st.markdown(f"**탐지 유형**  \n{row.get('탐지 유형','-')}")
+            st.markdown(f"**EventID**  \n{row.get('EventID','-')}")
+            st.markdown(f"**위험도**  \n{row.get('위험도','-')}")
+            st.markdown(f"**AI 위험도**  \n{row.get('AI 위험도','-')}")
+            st.markdown(f"**AI 점수**  \n{row.get('AI 위험도 점수','-')}")
+
+        with col2:
+
+            if "공격 단계" in row.index:
+                st.markdown(f"**공격 단계**  \n{row['공격 단계']}")
+
+            if "공격 경로" in row.index:
+                st.markdown(f"**공격 경로**  \n{row['공격 경로']}")
+
+            if "Technique Name" in row.index:
+                st.markdown(f"**Technique**  \n{row['Technique Name']}")
+
+            if "AI 분석" in row.index:
+                st.markdown(f"**AI 분석**  \n{row['AI 분석']}")
+
+        st.markdown("### 행위 내용")
+
+        st.code(
+            row.get("행위 내용",""),
+            language="text"
+        )
 
 
 # ==================================================================
@@ -1042,10 +1105,12 @@ with row1_col1:
             unsafe_allow_html=True,
         )
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("위험", latest_stats["high"])
-        c2.metric("의심", latest_stats["medium"])
-        c3.metric("정상", latest_stats["low"])
+        c1, c2, c3, c4 = st.columns(4)
+
+        c1.metric("High", latest_stats["high"])
+        c2.metric("Critical", latest_stats["critical"])
+        c3.metric("알림", latest_stats["alert"])
+        c4.metric("AI 평균", latest_stats["avg_ai_score"])
 
         st.markdown("---")
 
@@ -1059,11 +1124,12 @@ with row1_col1:
             unsafe_allow_html=True,
         )
 
-        c4, c5, c6 = st.columns(3)
-        c4.metric("위험", accum_stats["high"])
-        c5.metric("의심", accum_stats["medium"])
-        c6.metric("정상", accum_stats["low"])
+        c4, c5, c6, c7 = st.columns(4)
 
+        c4.metric("High", accum_stats["high"])
+        c5.metric("Critical", accum_stats["critical"])
+        c6.metric("알림", accum_stats["alert"])
+        c7.metric("AI 평균", accum_stats["avg_ai_score"])
         st.caption(f"{MAX_ACCUM_COUNT:,}개 도달 시 자동 초기화")
 
         st.markdown("---")
@@ -1079,16 +1145,16 @@ with row1_col2:
             st.error(f"FastAPI 서버 연결 실패: {load_err}")
 
         elif not display_df.empty:
+
             display_cols = [
                 c for c in [
                     "ID",
                     "로그 수신 날짜",
                     "위험도",
-                    "AI 위험도 점수",
+                    "최종 점수",
                     "AI 위험도",
+                    "공격 단계",
                     "탐지 유형",
-                    "EventID",
-                    "Tactic ID",
                     "Technique Name",
                     "프로세스",
                     "행위 내용",
@@ -1102,53 +1168,81 @@ with row1_col2:
             if "ID" in table_df.columns:
                 table_df = table_df.sort_values("ID", ascending=False)
 
-            st.dataframe(
+            selected = st.dataframe(
                 table_df.head(100),
                 use_container_width=True,
                 hide_index=True,
                 height=350,
+                on_select="rerun",
+                selection_mode="single-row",
             )
+
+            selected_rows = selected.selection.rows
+
+            if selected_rows:
+                idx = selected_rows[0]
+                row = table_df.iloc[idx]
+
+                st.divider()
+                st.subheader("🔍 탐지 상세 정보")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown(f"**프로세스**  \n{row.get('프로세스','-')}")
+                    st.markdown(f"**탐지 유형**  \n{row.get('탐지 유형','-')}")
+                    st.markdown(f"**위험도**  \n{row.get('위험도','-')}")
+                    st.markdown(f"**AI 위험도**  \n{row.get('AI 위험도','-')}")
+                    st.markdown(f"**최종 점수**  \n{row.get('최종 점수','-')}")
+
+                with col2:
+                    st.markdown(f"**공격 단계**  \n{row.get('공격 단계','-')}")
+                    st.markdown(f"**Technique**  \n{row.get('Technique Name','-')}")
+                    st.markdown(f"**AI 분석**  \n{row.get('AI 분석','-')}")
+
+                st.markdown("### 행위 내용")
+                st.code(row.get("행위 내용", ""), language="text")
+
+            st.markdown("---")
+
+            realtime_mode = st.toggle(
+                "🔴 실시간 위협 감시 모드 (Agent 작동)",
+                value=False,
+            )
+
+            if realtime_mode:
+                st.success("Agent 작동 상태: 새 로그만 자동 조회 중")
+            else:
+                st.caption("Agent 작동 대기 중")
+
+            st.caption("⚠️ Windows + Sysmon Agent 필요")
+
+            st.markdown("---")
+
+            if st.button(
+                "🛡️ Fileless 공격 탐지 (PowerShell)",
+                use_container_width=True,
+                help="PowerShell Script Block Logging Event ID 4104 기반 Fileless 의심 행위 탐지",
+            ):
+                with st.spinner("Fileless 위협 탐지 중..."):
+                    collected, sent, err = collect_fileless_threats()
+
+                if collected == 0:
+                    if err:
+                        st.error(f"오류: {err}")
+                    else:
+                        st.info("의심 Fileless 활동이 감지되지 않았습니다.")
+                else:
+                    if err:
+                        st.warning(f"{collected}건 탐지됨, 서버 전송 실패: {err}")
+                    else:
+                        st.success(f"{sent}건 Fileless 위협 탐지 → 서버 전송 완료")
+                        st.rerun()
+
+            st.caption(f"수집 대상: {TARGET_IDS_LABEL}")
 
         else:
             st.info("수집된 로그가 없습니다. Sysmon 로그 수집 Agent를 실행하세요.")
-
-        st.markdown("---")
-
-        realtime_mode = st.toggle(
-            "🔴 실시간 위협 감시 모드 (Agent 작동)",
-            value=False,
-        )
-
-        if realtime_mode:
-            st.success("Agent 작동 상태: 새 로그만 자동 조회 중")
-        else:
-            st.caption("Agent 작동 대기 중")
-
-        st.caption("⚠️ Windows + Sysmon Agent 필요")
-
-        st.markdown("---")
-
-        if st.button(
-            "🛡️ Fileless 공격 탐지 (PowerShell)",
-            use_container_width=True,
-            help="PowerShell Script Block Logging Event ID 4104 기반 Fileless 의심 행위 탐지",
-        ):
-            with st.spinner("Fileless 위협 탐지 중..."):
-                collected, sent, err = collect_fileless_threats()
-
-            if collected == 0:
-                if err:
-                    st.error(f"오류: {err}")
-                else:
-                    st.info("의심 Fileless 활동이 감지되지 않았습니다.")
-            else:
-                if err:
-                    st.warning(f"{collected}건 탐지됨, 서버 전송 실패: {err}")
-                else:
-                    st.success(f"{sent}건 Fileless 위협 탐지 → 서버 전송 완료")
-                    st.rerun()
-
-        st.caption(f"수집 대상: {TARGET_IDS_LABEL}")
 
 # ==================================================================
 # 대응 결과 테이블
