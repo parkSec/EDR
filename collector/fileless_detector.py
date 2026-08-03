@@ -15,6 +15,15 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import base64
 
+import psutil
+
+try:
+    import win32gui
+    import win32process
+except ImportError:
+    win32gui = None
+    win32process = None
+
 # ======================================================================
 # 1. 의심 PowerShell 패턴 정의
 # ======================================================================
@@ -229,45 +238,88 @@ def analyze_powershell_command(command: str) -> Dict:
 # 4. 백그라운드 PowerShell 탐지
 # ======================================================================
 
+def _get_visible_window_pids() -> set:
+    """
+    화면에 실제로 표시되는 창을 가진 프로세스 PID 목록을 반환한다.
+    새 PowerShell 프로세스를 실행하지 않고 Win32 API로 직접 확인한다.
+    """
+    visible_pids = set()
+
+    if win32gui is None or win32process is None:
+        return visible_pids
+
+    def enum_window_callback(hwnd, _):
+        try:
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+
+            window_title = win32gui.GetWindowText(hwnd).strip()
+
+            if not window_title:
+                return
+
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            visible_pids.add(pid)
+
+        except Exception:
+            pass
+
+    try:
+        win32gui.EnumWindows(enum_window_callback, None)
+    except Exception:
+        pass
+
+    return visible_pids
+
+
 def detect_background_powershell() -> List[Dict]:
     """
-    백그라운드에서 실행 중인 의심 PowerShell 프로세스 탐지
-    - 숨겨진 윈도우
-    - 최소화 상태
-    - 콘솔 없음
-    
-    Returns:
-        의심 PowerShell 프로세스 리스트
+    새 PowerShell을 실행하지 않고 현재 실행 중인
+    powershell.exe 및 pwsh.exe를 직접 조회한다.
     """
+    detected_processes = []
+
     try:
-        ps_command = (
-            "Get-Process -Name powershell, pwsh -ErrorAction SilentlyContinue | "
-            "Where-Object {$_.MainWindowTitle -eq '' -or $_.MainWindowHandle -eq 0} | "
-            "Select-Object @{{Name='ProcessID'; Expression={{$_.Id}}}}, "
-            "@{{Name='ProcessName'; Expression={{$_.ProcessName}}}}, "
-            "@{{Name='CommandLine'; Expression={{$_.CommandLine}}}} | "
-            "ConvertTo-Json"
-        )
-        
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_command],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        
-        if result.returncode == 0 and result.stdout.strip():
+        visible_window_pids = _get_visible_window_pids()
+
+        for proc in psutil.process_iter(
+            ["pid", "name", "cmdline"]
+        ):
             try:
-                processes = json.loads(result.stdout)
-                if not isinstance(processes, list):
-                    processes = [processes] if processes else []
-                return processes
-            except json.JSONDecodeError:
-                return []
-        
-        return []
-    
+                pid = proc.info.get("pid")
+                process_name = (
+                    proc.info.get("name") or ""
+                ).lower()
+
+                if process_name not in {
+                    "powershell.exe",
+                    "pwsh.exe"
+                }:
+                    continue
+
+                # 화면에 표시되는 정상 PowerShell 창은 제외
+                if pid in visible_window_pids:
+                    continue
+
+                command_line = " ".join(
+                    proc.info.get("cmdline") or []
+                )
+
+                detected_processes.append({
+                    "ProcessID": pid,
+                    "ProcessName": process_name,
+                    "CommandLine": command_line
+                })
+
+            except (
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+                psutil.ZombieProcess
+            ):
+                continue
+
+        return detected_processes
+
     except Exception as e:
         print(f"⚠️ 백그라운드 PowerShell 탐지 오류: {e}")
         return []

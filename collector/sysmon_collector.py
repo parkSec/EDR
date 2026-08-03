@@ -1,12 +1,15 @@
 import json
+import os
 import platform
 import socket
 import subprocess
 import sys
 import time
 import ipaddress
+
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -20,6 +23,19 @@ TARGET_EVENT_IDS = [1, 3, 5, 22]
 
 API_URL = "http://127.0.0.1:8000/logs"
 POLL_INTERVAL = 3
+
+BATCH_SIZE = 500
+
+# 현재 에이전트 프로세스 식별용
+AGENT_PID = os.getpid()
+
+# API 주소에서 IP와 포트를 추출
+_API_TARGET = urlparse(API_URL)
+
+API_HOST = _API_TARGET.hostname or "127.0.0.1"
+API_PORT = _API_TARGET.port or (
+    443 if _API_TARGET.scheme == "https" else 80
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATE_FILE = Path(__file__).resolve().parent / "collector_state.json"
@@ -219,6 +235,36 @@ def safe_int(value, default=0):
         return int(str(value))
     except Exception:
         return default
+
+def is_agent_backend_log(log):
+    """
+    현재 EDR 에이전트가 FastAPI 서버로 보내는
+    자체 네트워크 연결 로그인지 확인한다.
+    """
+    event_id = safe_int(log.get("event_id"))
+    process_id = safe_int(log.get("process_id"))
+
+    destination_ip = str(
+        log.get("destination_ip") or ""
+    ).strip()
+
+    destination_port = safe_int(
+        log.get("destination_port")
+    )
+
+    backend_addresses = {
+        API_HOST,
+        "127.0.0.1",
+        "::1",
+        "localhost"
+    }
+
+    return (
+        event_id == 3
+        and process_id == AGENT_PID
+        and destination_port == API_PORT
+        and destination_ip in backend_addresses
+    )
 
 def get_network_peer(message, host_ip=""):
     """
@@ -630,28 +676,59 @@ def notify_alerts(logs):
 # PowerShell로 Sysmon 이벤트 조회
 # ============================================================
 
-def run_powershell_get_events(max_records=100):
-    ps_script = """
-$events = Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents """ + str(max_records) + """ |
-    Where-Object { $_.Id -eq 1 -or $_.Id -eq 3 -or $_.Id -eq 5 -or $_.Id -eq 22 }
+def run_powershell_get_events(
+    last_record_id,
+    max_records=BATCH_SIZE
+):
+    """
+    마지막 처리 RecordId보다 큰 이벤트만 오래된 순서부터 조회한다.
+    """
+
+    last_record_id = safe_int(last_record_id)
+    max_records = max(1, safe_int(max_records, BATCH_SIZE))
+
+    ps_script = r"""
+$xpath = "*[System[
+    (EventID=1 or EventID=3 or EventID=5 or EventID=22)
+    and
+    (EventRecordID > %d)
+]]"
+
+$events = Get-WinEvent `
+    -LogName '%s' `
+    -FilterXPath $xpath `
+    -Oldest `
+    -MaxEvents %d `
+    -ErrorAction Stop
 
 $result = @()
 
 foreach ($e in $events) {
     $result += [PSCustomObject]@{
-        Id = $e.Id
-        RecordId = $e.RecordId
-        TimeCreated = $e.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
-        Message = $e.Message
+        Id          = $e.Id
+        RecordId    = $e.RecordId
+        TimeCreated = $e.TimeCreated.ToString(
+            "yyyy-MM-dd HH:mm:ss"
+        )
+        Message     = $e.Message
     }
 }
 
 $result | ConvertTo-Json -Depth 5
-"""
+""" % (
+        last_record_id,
+        SYSMON_CHANNEL,
+        max_records
+    )
 
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                ps_script
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -692,8 +769,17 @@ $result | ConvertTo-Json -Depth 5
 # 최근 Sysmon 로그 수집
 # ============================================================
 
-def collect_recent_logs():
-    events = run_powershell_get_events(100)
+def collect_recent_logs(
+    last_record_id=None,
+    batch_size=BATCH_SIZE
+    ):
+    if last_record_id is None:
+        last_record_id = load_last_record_id()
+
+    events = run_powershell_get_events(
+        last_record_id,
+        batch_size
+    )
 
     logs = []
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -904,81 +990,171 @@ def collect_all_logs() -> list:
 # ============================================================
 
 def main():
-    print("Sysmon 실시간 로그 이벤트 수집 및 알람 기능 시작")
-    print("수집 대상 Event ID:", TARGET_EVENT_IDS)
-    print("수집 주기:", str(POLL_INTERVAL) + "초")
-    print("FastAPI 주소:", API_URL)
-    print("상태 파일:", STATE_FILE)
-    print("알람 로그 파일:", ALERT_LOG_FILE)
-    print("-" * 70)
+    print("=" * 60)
+    print("Sysmon 실시간 로그 수집기를 시작합니다.")
+    print(f"수집 대상 Event ID: {TARGET_EVENT_IDS}")
+    print(f"전송 주소: {API_URL}")
+    print(f"수집 주기: {POLL_INTERVAL}초")
+    print(f"한 번에 조회할 이벤트 수: {BATCH_SIZE}개")
+    print("=" * 60)
 
-    if platform.system() != "Windows":
-        print("이 수집기는 Windows에서만 실행 가능합니다.")
-        return
-
+    # 이전에 정상적으로 처리한 마지막 Sysmon RecordId 불러오기
     last_record_id = load_last_record_id()
-    print("마지막 처리 RecordId:", last_record_id)
+
+    print(f"[수집 시작 위치] 마지막 RecordId: {last_record_id}")
 
     while True:
         try:
-            logs = collect_recent_logs()
-            logs.sort(key=lambda x: x.get("_record_id", 0))
+            processed_count = 0
 
-            new_logs = []
+            # 미처리 이벤트가 500개를 넘는 경우
+            # 여러 번 반복해서 모두 따라잡는다.
+            while True:
+                logs = collect_recent_logs(
+                    last_record_id,
+                    BATCH_SIZE
+                )
 
-            for log in logs:
-                record_id = log.get("_record_id", 0)
+                # 마지막 처리 RecordId보다 큰 이벤트만 남긴다.
+                logs = [
+                    log
+                    for log in logs
+                    if safe_int(log.get("_record_id")) > last_record_id
+                ]
 
-                if record_id > last_record_id:
-                    new_logs.append(log)
+                # 오래된 이벤트부터 처리한다.
+                logs.sort(
+                    key=lambda log: safe_int(
+                        log.get("_record_id")
+                    )
+                )
 
-            if len(new_logs) == 0:
-                print("새 Sysmon 로그 없음")
+                if not logs:
+                    if processed_count == 0:
+                        print("새로운 Sysmon 로그가 없습니다.")
 
-            else:
-                new_logs = add_xgboost_prediction(new_logs)
-                new_logs = apply_alert_policy(new_logs)
+                    break
 
-                notify_alerts(new_logs)
+                # 이번 묶음에서 실제로 읽은 마지막 RecordId
+                batch_last_record_id = max(
+                    safe_int(log.get("_record_id"))
+                    for log in logs
+                )
 
-                success = send_logs_to_fastapi(new_logs)
+                upload_logs = []
+                excluded_count = 0
 
-                if success:
-                    max_record_id = max(log.get("_record_id", 0) for log in new_logs)
-                    last_record_id = max_record_id
-                    save_last_record_id(last_record_id)
+                for log in logs:
+                    # EDR 에이전트가 백엔드 :8000으로 보내는
+                    # 자체 네트워크 통신은 DB 저장 대상에서 제외한다.
+                    if is_agent_backend_log(log):
+                        excluded_count += 1
+                        continue
 
-                    for log in new_logs:
+                    upload_logs.append(log)
+
+                if excluded_count > 0:
+                    print(
+                        f"[자체 통신 제외] "
+                        f"{excluded_count}건을 제외했습니다."
+                    )
+
+                # 실제로 전송할 로그가 있는 경우
+                if upload_logs:
+                    # XGBoost AI 위험도 분석
+                    upload_logs = add_xgboost_prediction(
+                        upload_logs
+                    )
+
+                    # Critical 및 90점 이상 정책 적용
+                    upload_logs = apply_alert_policy(
+                        upload_logs
+                    )
+
+                    # FastAPI 서버로 전송
+                    send_result = send_logs_to_fastapi(
+                        upload_logs
+                    )
+
+                    # send_logs_to_fastapi()가 False를 반환한 경우
+                    if send_result is False:
                         print(
-                            "[수집/전송] "
-                            + "RecordId="
-                            + str(log.get("_record_id"))
-                            + " | EventID="
-                            + str(log.get("event_id"))
-                            + " | Process="
-                            + str(log.get("process_name"))
-                            + " | Risk="
-                            + str(log.get("risk"))
-                            + " | AI="
-                            + str(log.get("ai_score"))
-                            + "/"
-                            + str(log.get("ai_risk"))
-                            + " | Status="
-                            + str(log.get("status"))
+                            "[전송 실패] RecordId를 갱신하지 않습니다."
                         )
+                        print(
+                            "다음 수집 주기에 같은 로그를 다시 시도합니다."
+                        )
+                        break
+
+                    # 전송 성공 후 알림 실행
+                    notify_alerts(upload_logs)
+
+                # 자체 통신 로그만 존재한 경우에는
+                # 백엔드 전송 없이 정상 처리된 것으로 본다.
+                else:
+                    send_result = True
+
+                # 여기까지 왔다면 이번 묶음이 정상 처리된 것이다.
+                # DB에 전송하지 않은 자체 통신 로그의 RecordId도
+                # 처리 완료 상태에 포함한다.
+                last_record_id = batch_last_record_id
+                save_last_record_id(last_record_id)
+
+                processed_count += len(logs)
+
+                print(
+                    f"[처리 완료] 조회 {len(logs)}건 / "
+                    f"전송 {len(upload_logs)}건 / "
+                    f"마지막 RecordId {last_record_id}"
+                )
+
+                for log in upload_logs:
+                    record_id = log.get("_record_id")
+                    event_id = log.get("event_id")
+                    process_name = log.get("process_name")
+                    destination_ip = log.get("destination_ip")
+                    destination_port = log.get(
+                        "destination_port"
+                    )
+                    ai_score = log.get(
+                        "ai_score",
+                        log.get("final_score")
+                    )
+                    ai_risk = log.get("ai_risk")
+
+                    print(
+                        "[수집/전송] "
+                        f"RecordId={record_id} | "
+                        f"EventID={event_id} | "
+                        f"Process={process_name} | "
+                        f"Destination="
+                        f"{destination_ip}:{destination_port} | "
+                        f"AI={ai_score} / {ai_risk}"
+                    )
+
+                # BATCH_SIZE만큼 꽉 채워 조회됐다면
+                # 아직 뒤에 이벤트가 더 있을 수 있으므로
+                # 쉬지 않고 바로 다음 묶음을 조회한다.
+                if len(logs) >= BATCH_SIZE:
+                    print(
+                        "[추가 조회] 아직 미처리 이벤트가 "
+                        "남아 있을 수 있습니다."
+                    )
+                    continue
+
+                # 조회된 이벤트가 BATCH_SIZE보다 적으면
+                # 현재까지 밀린 이벤트를 모두 처리한 것으로 본다.
+                break
 
         except KeyboardInterrupt:
-            print("수집기를 종료합니다.")
+            print("\n수집기를 종료합니다.")
             break
 
         except Exception as e:
-            print("[수집 중 오류]", e)
+            print(f"[수집 중 오류] {e}")
 
         time.sleep(POLL_INTERVAL)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n[중지] Sysmon Collector를 정상 종료했습니다.")
+    main()
