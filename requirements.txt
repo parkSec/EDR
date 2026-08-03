@@ -12,4 +12,8 @@ scikit-learn
 joblib
 numpy
 psutil
-pywin32plyer
+pystray
+Pillow
+pyinstaller
+pywin32
+plyer

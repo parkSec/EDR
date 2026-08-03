@@ -220,6 +220,59 @@ def safe_int(value, default=0):
     except Exception:
         return default
 
+def get_network_peer(message, host_ip=""):
+    """
+    Sysmon Event ID 3에서 실제 원격지 IP를 판별한다.
+
+    Initiated=false:
+        외부 PC가 Windows로 연결
+        SourceIp가 공격자/원격 IP
+
+    Initiated=true:
+        Windows가 외부로 연결
+        DestinationIp가 원격 IP
+    """
+
+    initiated = get_field(message, "Initiated").strip().lower()
+
+    source_ip = get_field(message, "SourceIp").strip()
+    source_port = get_field(message, "SourcePort").strip()
+
+    destination_ip = get_field(message, "DestinationIp").strip()
+    destination_port = get_field(message, "DestinationPort").strip()
+
+    if initiated == "false":
+        # 칼리 → 윈도우와 같은 인바운드 연결
+        remote_ip = source_ip
+        direction = "inbound"
+
+    elif initiated == "true":
+        # 윈도우 → 외부 서버와 같은 아웃바운드 연결
+        remote_ip = destination_ip
+        direction = "outbound"
+
+    elif host_ip and destination_ip == host_ip:
+        # Initiated 필드가 없을 경우 보조 판별
+        remote_ip = source_ip
+        direction = "inbound"
+
+    elif host_ip and source_ip == host_ip:
+        remote_ip = destination_ip
+        direction = "outbound"
+
+    else:
+        # 판단할 수 없을 경우 기존 방식 우선
+        remote_ip = destination_ip or source_ip
+        direction = "unknown"
+
+    return {
+        "direction": direction,
+        "remote_ip": remote_ip,
+        "source_ip": source_ip,
+        "source_port": source_port,
+        "destination_ip": destination_ip,
+        "destination_port": destination_port,
+    }
 
 # ============================================================
 # 행위 설명 생성
@@ -245,21 +298,31 @@ def make_action_desc(event_id, message):
         )
 
     if event_id == 3:
-        dst_ip = get_field(message, "DestinationIp")
-        dst_port = get_field(message, "DestinationPort")
+        network = get_network_peer(message)
         protocol = get_field(message, "Protocol")
 
-        return (
-            "[ID:3] "
-            + process_name
-            + " 네트워크 연결 -> "
-            + dst_ip
-            + ":"
-            + dst_port
-            + " "
-            + protocol
-        )
+        if network["direction"] == "inbound":
+            return (
+                f"[ID:3] {process_name} 인바운드 연결"
+                f" | 원격: {network['source_ip']}:{network['source_port']}"
+                f" -> 로컬: {network['destination_ip']}:{network['destination_port']}"
+                f" | {protocol}"
+            )
 
+        if network["direction"] == "outbound":
+            return (
+                f"[ID:3] {process_name} 아웃바운드 연결"
+                f" | 로컬: {network['source_ip']}:{network['source_port']}"
+                f" -> 원격: {network['destination_ip']}:{network['destination_port']}"
+                f" | {protocol}"
+            )
+
+        return (
+            f"[ID:3] {process_name} 네트워크 연결"
+            f" | {network['source_ip']}:{network['source_port']}"
+            f" -> {network['destination_ip']}:{network['destination_port']}"
+            f" | {protocol}"
+        )
     if event_id == 5:
         process_id = get_field(message, "ProcessId")
 
@@ -656,6 +719,18 @@ def collect_recent_logs():
         parent_image = get_field(message, "ParentImage")
         parent_process_id = get_field(message, "ParentProcessId")
 
+        if event_id == 3:
+            network = get_network_peer(message, host_ip)
+        else:
+            network = {
+            "direction": "",
+            "remote_ip": "",
+            "source_ip": "",
+            "source_port": "",
+            "destination_ip": "",
+            "destination_port": "",
+            }
+
         mitre = MITRE_MAP.get(event_id, {})
 
         log = {
@@ -675,8 +750,10 @@ def collect_recent_logs():
             "process_path": image,
             "event_id": event_id,
             "command_line": get_field(message, "CommandLine"),
-            "destination_ip": get_field(message, "DestinationIp"),
-            "destination_port": get_field(message, "DestinationPort"),
+            # DB의 destination_ip에는 실제 대응 대상인 원격 IP를 저장
+            "destination_ip": network.get("remote_ip", ""),
+            # 포트는 접속 대상 포트를 유지
+            "destination_port": network.get("destination_port", ""),
             "query_name": get_field(message, "QueryName"),
             "status": "신규",
             "_record_id": record_id,
@@ -687,8 +764,8 @@ def collect_recent_logs():
             "image": image,
             "user": get_field(message, "User"),
             "parent_image": parent_image,
-            "source_ip": get_field(message, "SourceIp"),
-            "source_port": get_field(message, "SourcePort"),
+            "source_ip": network.get("source_ip", ""),
+            "source_port": network.get("source_port", ""),
             "attack_stage":"",
             "attack_path":"",
             "ai_reason":"",

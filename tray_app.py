@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw
 import requests
 
 from collector.sysmon_collector import collect_all_logs, apply_alert_policy
-from response import response_by_risk
+from response import load_toggle_state, load_and_respond
 
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "xgboost"))
@@ -120,6 +120,7 @@ HOST_IP         = socket.gethostbyname(socket.gethostname())
 
 _agent_running     = False
 _agent_thread      = None
+_response_thread   = None
 _dashboard_started = False
 _dashboard_pid     = None
 
@@ -157,6 +158,7 @@ def _to_payload(log: dict) -> dict:
         "technique_name":   log.get("technique_name"),
         "action_desc":      log.get("action_desc"),
         "process_name":     log.get("process_name"),
+        "process_path":     log.get("process_path"),
         "event_id":         log.get("event_id"),
         "command_line":     log.get("command_line"),
         "destination_ip":   log.get("destination_ip"),
@@ -175,8 +177,8 @@ def _apply_xgboost(logs: list[dict]) -> list[dict]:
         try:
             result = _predictor.predict(log)
             if result.get("success"):
-                log["ai_risk"]  = result.get("risk_label", "Unknown")
-                log["ai_score"] = round(result.get("probability", 0.0), 4)
+                log["ai_risk"] = result.get("risk_label", "Unknown")
+                log["ai_score"] = round(float(result.get("probability", 0.0)) * 100,2)
         except Exception:
             pass
     return logs
@@ -195,28 +197,66 @@ def _agent_loop():
                     json={"logs": [_to_payload(l) for l in logs]},
                     timeout=10,
                 )
-                for log in logs:
-                    risk = log.get("risk", "Low")
-                    if risk != "Low":
-                        response_by_risk(
-                            risk_level     = risk,
-                            process_path   = (log.get("command_line") or "").split()[0] or None,
-                            destination_ip = log.get("destination_ip") or None,
-                        )
         except Exception:
             pass
         time.sleep(INTERVAL_SEC)
 
+def _response_loop():
+    """
+    사용자 대시보드의 자동대응 토글을 확인하고,
+    DB에 저장된 위험 로그를 자동으로 대응한다.
+    """
+
+    global _agent_running
+
+    while _agent_running:
+        try:
+            toggle = load_toggle_state()
+
+            auto_response = toggle.get("auto_response", True)
+            on_time = toggle.get("on_time", None)
+
+            if auto_response:
+                load_and_respond(on_time=on_time)
+
+        except Exception as e:
+            print(f"[자동대응 오류] {e}")
+
+        # 5초 대기하되, 에이전트가 중지되면 즉시 빠져나옴
+        for _ in range(5):
+            if not _agent_running:
+                break
+
+            time.sleep(1)
 
 # ── 트레이 메뉴 콜백 ─────────────────────────────────────────────────
 def _start_agent(icon, item):
-    global _agent_running, _agent_thread
+    global _agent_running
+    global _agent_thread
+    global _response_thread
+
     if _agent_running:
         return
+
     _agent_running = True
-    _agent_thread  = threading.Thread(target=_agent_loop, daemon=True)
+
+    # 1. Sysmon 로그 수집 및 서버 전송 스레드
+    _agent_thread = threading.Thread(
+        target=_agent_loop,
+        daemon=True,
+        name="EDRCollectorThread",
+    )
     _agent_thread.start()
-    icon.icon  = _make_icon(True)
+
+    # 2. DB 감시 및 자동대응 스레드
+    _response_thread = threading.Thread(
+        target=_response_loop,
+        daemon=True,
+        name="EDRResponseThread",
+    )
+    _response_thread.start()
+
+    icon.icon = _make_icon(True)
     icon.title = "EDR Agent — 실행 중"
     _update_menu(icon)
 
