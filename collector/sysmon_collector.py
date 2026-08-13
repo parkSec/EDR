@@ -7,6 +7,7 @@ import sys
 import time
 import ipaddress
 
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -380,6 +381,50 @@ def make_action_desc(event_id, message):
         return "[ID:22] " + process_name + " DNS 요청 | " + query_name
 
     return "Sysmon 이벤트"
+
+
+# ============================================================
+# 상관관계 가중치 (Correlation Weighting)
+# ============================================================
+
+CORRELATION_WINDOW_SEC = 300          # 상관관계를 볼 시간창(5분)
+CORRELATION_BONUS_PER_TACTIC = 15     # 겹친 전술 1개(2번째부터)당 보너스 점수
+
+_recent_tactic_events = deque(maxlen=1000)  # (timestamp, host_ip, tactic_id, tactic_name)
+
+
+def apply_correlation_weight(logs):
+    """
+    같은 host_ip에서 CORRELATION_WINDOW_SEC 이내에 서로 다른 tactic_id가
+    몇 개 겹쳤는지 계산해서 final_score에 보너스를 더하고,
+    attack_path에 겹친 전술 목록을 기록한다.
+    """
+    now_ts = time.time()
+
+    while _recent_tactic_events and now_ts - _recent_tactic_events[0][0] > CORRELATION_WINDOW_SEC:
+        _recent_tactic_events.popleft()
+
+    for log in logs:
+        host_ip = log.get("host_ip", "")
+        tactic_id = log.get("tactic_id")
+        tactic_name = log.get("tactic_name")
+
+        if tactic_id:
+            _recent_tactic_events.append((now_ts, host_ip, tactic_id, tactic_name))
+
+        matched = {
+            (t_id, t_name)
+            for (_, h_ip, t_id, t_name) in _recent_tactic_events
+            if h_ip == host_ip
+        }
+
+        if len(matched) >= 2:
+            bonus = (len(matched) - 1) * CORRELATION_BONUS_PER_TACTIC
+            boosted = (log.get("final_score") or 0) + bonus
+            log["final_score"] = round(min(boosted, 100.0), 2)  # 0~100 스케일 상한 고정
+            log["attack_path"] = ", ".join(sorted(name for _, name in matched if name))
+
+    return logs
 
 
 # ============================================================
@@ -1063,6 +1108,12 @@ def main():
                 if upload_logs:
                     # XGBoost AI 위험도 분석
                     upload_logs = add_xgboost_prediction(
+                        upload_logs
+                    )
+
+                    # 상관관계 가중치 적용 (final_score/attack_path만 갱신,
+                    # 알림 임계치에는 아직 미반영 - 1단계)
+                    upload_logs = apply_correlation_weight(
                         upload_logs
                     )
 

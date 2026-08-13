@@ -202,6 +202,25 @@ div[data-testid="stStatusWidget"] {
 # 서버 응답 변환
 # ==================================================================
 
+def compute_display_risk(final_score):
+    """
+    상관관계 가중치가 반영된 최종 점수 기준의 표시 전용 위험도.
+    ai_risk/자동 대응 판단에는 영향을 주지 않는 화면 표시용 값이다.
+    """
+    if pd.isna(final_score):
+        return "Unknown"
+
+    score = float(final_score)
+
+    if score >= 90:
+        return "Critical"
+    if score >= 50:
+        return "High"
+    if score >= 25:
+        return "Medium"
+    return "Low"
+
+
 def normalize_log_df(data):
     if not data:
         return pd.DataFrame()
@@ -248,6 +267,10 @@ def normalize_log_df(data):
 
     if "AI 위험도 점수" in df.columns:
         df["AI 위험도 점수"] = pd.to_numeric(df["AI 위험도 점수"], errors="coerce").fillna(0)
+
+    if "최종 점수" in df.columns:
+        df["최종 점수"] = pd.to_numeric(df["최종 점수"], errors="coerce").fillna(0)
+        df["표시 위험도"] = df["최종 점수"].apply(compute_display_risk)
 
     return df
 
@@ -985,6 +1008,8 @@ def show_alarm_history():
             st.markdown(f"**위험도**  \n{row.get('위험도','-')}")
             st.markdown(f"**AI 위험도**  \n{row.get('AI 위험도','-')}")
             st.markdown(f"**AI 점수**  \n{row.get('AI 위험도 점수','-')}")
+            st.markdown(f"**최종 점수(상관관계 반영)**  \n{row.get('최종 점수','-')}")
+            st.markdown(f"**표시 위험도**  \n{row.get('표시 위험도','-')}")
 
         with col2:
 
@@ -1194,6 +1219,8 @@ with row1_col2:
                     st.markdown(f"**위험도**  \n{row.get('위험도','-')}")
                     st.markdown(f"**AI 위험도**  \n{row.get('AI 위험도','-')}")
                     st.markdown(f"**최종 점수**  \n{row.get('최종 점수','-')}")
+                    st.markdown(f"**표시 위험도**  \n{row.get('표시 위험도','-')}")
+                    st.markdown(f"**공격 경로**  \n{row.get('공격 경로','-')}")
 
                 with col2:
                     st.markdown(f"**공격 단계**  \n{row.get('공격 단계','-')}")

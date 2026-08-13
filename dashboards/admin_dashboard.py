@@ -20,6 +20,26 @@ st.set_page_config(
 # 데이터 로드
 # ============================================================
 
+def compute_display_risk(final_score):
+    """
+    상관관계 가중치가 반영된 final_score를 기준으로 표시 전용 위험도를
+    산출한다. ai_risk/자동 대응 판단에는 영향을 주지 않는, 화면 표시용
+    값이다(apply_alert_policy의 90/50/25 기준과 동일하게 맞춤).
+    """
+    if pd.isna(final_score):
+        return "Unknown"
+
+    score = float(final_score)
+
+    if score >= 90:
+        return "Critical"
+    if score >= 50:
+        return "High"
+    if score >= 25:
+        return "Medium"
+    return "Low"
+
+
 def load_logs(limit=5000):
     try:
         response = requests.get(f"{SERVER_URL}/logs?limit={limit}", timeout=5)
@@ -65,6 +85,9 @@ def load_logs(limit=5000):
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
 
+        if "최종 점수" in df.columns:
+            df["표시 위험도"] = df["최종 점수"].apply(compute_display_risk)
+
         return df
 
     except Exception as e:
@@ -82,11 +105,14 @@ def make_admin_table(df):
         "위험도",
         "AI 위험도 점수",
         "AI 위험도",
+        "최종 점수",
+        "표시 위험도",
         "탐지 유형",
         "EventID",
         "Tactic ID",
         "Tactic Name",
         "공격 단계",
+        "공격 경로",
         "Technique ID",
         "Technique Name",
         "행위 내용",
