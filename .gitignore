@@ -11,4 +11,5 @@ collector/collector_state.json
 collector/alert_logs.jsonl
 __pycache__/
 *.pyc
-.env
+.envcollector/fileless_state.json
+collector/fileless_state.json

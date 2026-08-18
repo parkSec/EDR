@@ -626,152 +626,6 @@ def get_alert_history_df():
 
 
 # ==================================================================
-# Fileless 공격 탐지
-# ==================================================================
-
-def send_rows_to_server(rows):
-    if not rows:
-        return 0, ""
-
-    try:
-        response = requests.post(
-            f"{SERVER_URL}/logs",
-            json={"logs": rows},
-            timeout=10,
-        )
-        response.raise_for_status()
-
-        result = response.json()
-        return result.get("저장된 건수", len(rows)), ""
-
-    except Exception as e:
-        return 0, str(e)
-
-
-def run_powershell_fileless_scan(max_records=100):
-    ps_script = """
-$events = Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents """ + str(max_records) + """ -ErrorAction SilentlyContinue |
-    Where-Object { $_.Id -eq 4104 }
-
-$result = @()
-
-foreach ($e in $events) {
-    $msg = $e.Message
-
-    if (
-        $msg -match "EncodedCommand" -or
-        $msg -match "-enc" -or
-        $msg -match "IEX" -or
-        $msg -match "Invoke-Expression" -or
-        $msg -match "DownloadString" -or
-        $msg -match "Net.WebClient" -or
-        $msg -match "FromBase64String" -or
-        $msg -match "Invoke-WebRequest" -or
-        $msg -match "Start-Process" -or
-        $msg -match "Bypass"
-    ) {
-        $result += [PSCustomObject]@{
-            Id = $e.Id
-            RecordId = $e.RecordId
-            TimeCreated = $e.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
-            Message = $msg
-        }
-    }
-}
-
-$result | ConvertTo-Json -Depth 5
-"""
-
-    try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return [], result.stderr
-
-        output = result.stdout.strip()
-
-        if output == "":
-            return [], ""
-
-        data = json.loads(output)
-
-        if isinstance(data, dict):
-            data = [data]
-
-        if not isinstance(data, list):
-            return [], ""
-
-        return data, ""
-
-    except Exception as e:
-        return [], str(e)
-
-
-def collect_fileless_threats():
-    if platform.system() != "Windows":
-        return 0, 0, "Windows 환경에서만 Fileless 탐지가 가능합니다."
-
-    events, err = run_powershell_fileless_scan(max_records=100)
-
-    if err:
-        return 0, 0, err
-
-    if not events:
-        return 0, 0, ""
-
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    host_ip = LOCAL_HOST_IP
-    os_name = platform.platform()
-
-    rows_for_server = []
-
-    for event in events:
-        msg = str(event.get("Message", ""))
-        gen_time = event.get("TimeCreated", now_str)
-        short_msg = msg.replace("\n", " ")[:200]
-
-        row = {
-            "recv_time": now_str,
-            "gen_time": gen_time,
-            "host_ip": host_ip,
-            "os_name": os_name,
-            "rule_level": "중요",
-            "risk": "High",
-            "ai_risk": "Critical",
-            "ai_score": 95.0,
-            "detect_type": "Fileless 공격 탐지",
-            "tactic_id": "TA0002",
-            "tactic_name": "Execution",
-            "technique_id": "T1059.001",
-            "technique_name": "PowerShell",
-            "action_desc": "[ALERT] Fileless 의심 PowerShell 스크립트 탐지 | " + short_msg,
-            "process_name": "powershell.exe",
-            "event_id": 4104,
-            "command_line": short_msg,
-            "destination_ip": "",
-            "destination_port": "",
-            "query_name": "",
-            "status": "알림",
-        }
-
-        rows_for_server.append(row)
-
-    sent, send_err = send_rows_to_server(rows_for_server)
-
-    if send_err:
-        return len(rows_for_server), sent, send_err
-
-    return len(rows_for_server), sent, ""
-
-
-# ==================================================================
 # VirusTotal
 # ==================================================================
 
@@ -1233,38 +1087,14 @@ with row1_col2:
             st.markdown("---")
 
             realtime_mode = st.toggle(
-                "🔴 실시간 위협 감시 모드 (Agent 작동)",
-                value=False,
+                "🔄 실시간 자동 새로고침",
+                value=True,
             )
 
             if realtime_mode:
-                st.success("Agent 작동 상태: 새 로그만 자동 조회 중")
+                st.success("실시간 로그 자동 갱신 중")
             else:
-                st.caption("Agent 작동 대기 중")
-
-            st.caption("⚠️ Windows + Sysmon Agent 필요")
-
-            st.markdown("---")
-
-            if st.button(
-                "🛡️ Fileless 공격 탐지 (PowerShell)",
-                use_container_width=True,
-                help="PowerShell Script Block Logging Event ID 4104 기반 Fileless 의심 행위 탐지",
-            ):
-                with st.spinner("Fileless 위협 탐지 중..."):
-                    collected, sent, err = collect_fileless_threats()
-
-                if collected == 0:
-                    if err:
-                        st.error(f"오류: {err}")
-                    else:
-                        st.info("의심 Fileless 활동이 감지되지 않았습니다.")
-                else:
-                    if err:
-                        st.warning(f"{collected}건 탐지됨, 서버 전송 실패: {err}")
-                    else:
-                        st.success(f"{sent}건 Fileless 위협 탐지 → 서버 전송 완료")
-                        st.rerun()
+                st.caption("자동 새로고침 중지")
 
             st.caption(f"수집 대상: {TARGET_IDS_LABEL}")
 

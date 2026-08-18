@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import os
 import platform
@@ -5,8 +6,6 @@ import socket
 import subprocess
 import sys
 import time
-import ipaddress
-
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -24,43 +23,48 @@ TARGET_EVENT_IDS = [1, 3, 5, 22]
 
 API_URL = "http://127.0.0.1:8000/logs"
 POLL_INTERVAL = 3
-
 BATCH_SIZE = 500
 
-# 현재 에이전트 프로세스 식별용
 AGENT_PID = os.getpid()
-
-# API 주소에서 IP와 포트를 추출
 _API_TARGET = urlparse(API_URL)
-
 API_HOST = _API_TARGET.hostname or "127.0.0.1"
-API_PORT = _API_TARGET.port or (
-    443 if _API_TARGET.scheme == "https" else 80
-)
+API_PORT = _API_TARGET.port or (443 if _API_TARGET.scheme == "https" else 80)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-STATE_FILE = Path(__file__).resolve().parent / "collector_state.json"
-ALERT_LOG_FILE = Path(__file__).resolve().parent / "alert_logs.jsonl"
+COLLECTOR_DIR = Path(__file__).resolve().parent
+
+STATE_FILE = COLLECTOR_DIR / "collector_state.json"
+FILELESS_STATE_FILE = COLLECTOR_DIR / "fileless_state.json"
+ALERT_LOG_FILE = COLLECTOR_DIR / "alert_logs.jsonl"
 
 XGBOOST_DIR = BASE_DIR / "xgboost"
 sys.path.insert(0, str(XGBOOST_DIR))
 
-# collector/ 폴더를 sys.path에 추가해 fileless_detector 임포트 허용
-_COLLECTOR_DIR = str(Path(__file__).resolve().parent)
-if _COLLECTOR_DIR not in sys.path:
-    sys.path.insert(0, _COLLECTOR_DIR)
+if str(COLLECTOR_DIR) not in sys.path:
+    sys.path.insert(0, str(COLLECTOR_DIR))
+
+
+# ============================================================
+# Fileless 탐지 모듈 로드
+# ============================================================
+
+try:
+    from fileless_detector import (
+        detect_fileless_threats as _detect_fileless,
+        get_latest_powershell_record_id as _get_latest_fileless_record_id,
+    )
+
+    FILELESS_READY = True
+except Exception as e:
+    FILELESS_READY = False
+    _detect_fileless = None
+    _get_latest_fileless_record_id = None
+    print("[Fileless] 모듈 로드 실패:", e)
 
 
 # ============================================================
 # XGBoost 모델 로드
 # ============================================================
-
-try:
-    from fileless_detector import detect_fileless_threats as _detect_fileless
-    FILELESS_READY = True
-except ImportError:
-    FILELESS_READY = False
-    _detect_fileless = None
 
 try:
     from threat_predictor import ThreatPredictor
@@ -117,6 +121,7 @@ MITRE_MAP = {
         "technique_name": "DNS",
     },
 }
+
 ATTACK_STAGE_MAP = {
     "Execution": "실행",
     "Persistence": "지속성 확보",
@@ -128,7 +133,7 @@ ATTACK_STAGE_MAP = {
     "Collection": "정보 수집",
     "Command and Control": "명령 및 제어",
     "Exfiltration": "데이터 유출",
-    "Impact": "시스템 영향"
+    "Impact": "시스템 영향",
 }
 
 
@@ -138,17 +143,15 @@ def get_attack_stage(tactic):
 
 def build_ai_reason(log):
     reasons = []
+    event_id = int(log.get("event_id") or 0)
 
-    if log["event_id"] == 1:
+    if event_id == 1:
         reasons.append("Process Create")
-
-    elif log["event_id"] == 3:
+    elif event_id == 3:
         reasons.append("Network Connection")
-
-    elif log["event_id"] == 5:
+    elif event_id == 5:
         reasons.append("Process Terminated")
-
-    elif log["event_id"] == 22:
+    elif event_id == 22:
         reasons.append("DNS Query")
 
     if log.get("risk") == "High":
@@ -159,30 +162,88 @@ def build_ai_reason(log):
 
     return ", ".join(reasons)
 
+
 # ============================================================
 # 상태 파일 관리
 # ============================================================
+
 
 def load_last_record_id():
     if not STATE_FILE.exists():
         return 0
 
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
+        with open(STATE_FILE, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
             return int(data.get("last_record_id", 0))
-    except Exception:
+    except Exception as e:
+        print("[Sysmon state 읽기 오류]", e)
         return 0
 
 
 def save_last_record_id(record_id):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"last_record_id": record_id}, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {"last_record_id": int(record_id)},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def load_last_fileless_record_id():
+    if not FILELESS_STATE_FILE.exists():
+        return None
+
+    try:
+        with open(FILELESS_STATE_FILE, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+            return int(data.get("last_fileless_record_id", 0))
+    except Exception as e:
+        print("[Fileless state 읽기 오류]", e)
+        return None
+
+
+def save_last_fileless_record_id(record_id):
+    with open(FILELESS_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            {"last_fileless_record_id": int(record_id)},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def initialize_fileless_record_id():
+    """
+    fileless_state.json이 없으면 현재 최신 4104를 시작점으로 자동 생성한다.
+    따라서 과거 로그 전체를 재처리하지 않고 EDR 실행 이후 새 4104부터 본다.
+    """
+
+    saved = load_last_fileless_record_id()
+    if saved is not None:
+        return saved
+
+    latest = 0
+
+    if FILELESS_READY and _get_latest_fileless_record_id is not None:
+        try:
+            latest = int(_get_latest_fileless_record_id() or 0)
+        except Exception:
+            latest = 0
+
+    save_last_fileless_record_id(latest)
+    print(
+        "[Fileless 상태 초기화] "
+        f"현재 최신 4104 RecordId {latest}부터 이후 로그를 감시합니다."
+    )
+    return latest
 
 
 # ============================================================
 # 공통 유틸
 # ============================================================
+
 
 def get_local_ip():
     try:
@@ -204,9 +265,8 @@ def get_field(message, field_name):
 
     target = field_name + ":"
 
-    for line in message.splitlines():
+    for line in str(message).splitlines():
         line = line.strip()
-
         if line.startswith(target):
             return line.split(":", 1)[1].strip()
 
@@ -217,7 +277,7 @@ def get_process_name(image_path):
     if not image_path:
         return "unknown.exe"
 
-    image_path = image_path.replace("\\", "/")
+    image_path = str(image_path).replace("\\", "/")
     return image_path.split("/")[-1] or "unknown.exe"
 
 
@@ -232,32 +292,24 @@ def safe_int(value, default=0):
     try:
         if value is None or value == "":
             return default
-
         return int(str(value))
     except Exception:
         return default
 
+
 def is_agent_backend_log(log):
-    """
-    현재 EDR 에이전트가 FastAPI 서버로 보내는
-    자체 네트워크 연결 로그인지 확인한다.
-    """
+    """현재 EDR 수집기가 FastAPI :8000으로 보내는 자체 Event ID 3 로그를 제외한다."""
+
     event_id = safe_int(log.get("event_id"))
     process_id = safe_int(log.get("process_id"))
-
-    destination_ip = str(
-        log.get("destination_ip") or ""
-    ).strip()
-
-    destination_port = safe_int(
-        log.get("destination_port")
-    )
+    destination_ip = str(log.get("destination_ip") or "").strip()
+    destination_port = safe_int(log.get("destination_port"))
 
     backend_addresses = {
         API_HOST,
         "127.0.0.1",
         "::1",
-        "localhost"
+        "localhost",
     }
 
     return (
@@ -267,48 +319,27 @@ def is_agent_backend_log(log):
         and destination_ip in backend_addresses
     )
 
+
 def get_network_peer(message, host_ip=""):
-    """
-    Sysmon Event ID 3에서 실제 원격지 IP를 판별한다.
-
-    Initiated=false:
-        외부 PC가 Windows로 연결
-        SourceIp가 공격자/원격 IP
-
-    Initiated=true:
-        Windows가 외부로 연결
-        DestinationIp가 원격 IP
-    """
-
     initiated = get_field(message, "Initiated").strip().lower()
-
     source_ip = get_field(message, "SourceIp").strip()
     source_port = get_field(message, "SourcePort").strip()
-
     destination_ip = get_field(message, "DestinationIp").strip()
     destination_port = get_field(message, "DestinationPort").strip()
 
     if initiated == "false":
-        # 칼리 → 윈도우와 같은 인바운드 연결
         remote_ip = source_ip
         direction = "inbound"
-
     elif initiated == "true":
-        # 윈도우 → 외부 서버와 같은 아웃바운드 연결
         remote_ip = destination_ip
         direction = "outbound"
-
     elif host_ip and destination_ip == host_ip:
-        # Initiated 필드가 없을 경우 보조 판별
         remote_ip = source_ip
         direction = "inbound"
-
     elif host_ip and source_ip == host_ip:
         remote_ip = destination_ip
         direction = "outbound"
-
     else:
-        # 판단할 수 없을 경우 기존 방식 우선
         remote_ip = destination_ip or source_ip
         direction = "unknown"
 
@@ -321,9 +352,11 @@ def get_network_peer(message, host_ip=""):
         "destination_port": destination_port,
     }
 
+
 # ============================================================
 # 행위 설명 생성
 # ============================================================
+
 
 def make_action_desc(event_id, message):
     image = get_field(message, "Image")
@@ -333,15 +366,10 @@ def make_action_desc(event_id, message):
         command_line = get_field(message, "CommandLine")
         parent_image = get_field(message, "ParentImage")
         parent_name = get_process_name(parent_image)
-
         return (
-            "[ID:1] "
-            + process_name
-            + " 프로세스 실행"
-            + " | 부모: "
-            + parent_name
-            + " | CMD: "
-            + command_line[:120]
+            f"[ID:1] {process_name} 프로세스 실행"
+            f" | 부모: {parent_name}"
+            f" | CMD: {command_line[:120]}"
         )
 
     if event_id == 3:
@@ -370,59 +398,128 @@ def make_action_desc(event_id, message):
             f" -> {network['destination_ip']}:{network['destination_port']}"
             f" | {protocol}"
         )
+
     if event_id == 5:
         process_id = get_field(message, "ProcessId")
-
-        return "[ID:5] " + process_name + " 프로세스 종료 | PID: " + process_id
+        return f"[ID:5] {process_name} 프로세스 종료 | PID: {process_id}"
 
     if event_id == 22:
         query_name = get_field(message, "QueryName")
-
-        return "[ID:22] " + process_name + " DNS 요청 | " + query_name
+        return f"[ID:22] {process_name} DNS 요청 | {query_name}"
 
     return "Sysmon 이벤트"
 
 
 # ============================================================
-# 상관관계 가중치 (Correlation Weighting)
+# Fileless + Sysmon 상관관계 가중치
 # ============================================================
 
-CORRELATION_WINDOW_SEC = 300          # 상관관계를 볼 시간창(5분)
-CORRELATION_BONUS_PER_TACTIC = 15     # 겹친 전술 1개(2번째부터)당 보너스 점수
-
-_recent_tactic_events = deque(maxlen=1000)  # (timestamp, host_ip, tactic_id, tactic_name)
+CORRELATION_WINDOW_SEC = 300
+_recent_behavior_events = deque(maxlen=3000)
 
 
 def apply_correlation_weight(logs):
     """
-    같은 host_ip에서 CORRELATION_WINDOW_SEC 이내에 서로 다른 tactic_id가
-    몇 개 겹쳤는지 계산해서 final_score에 보너스를 더하고,
-    attack_path에 겹친 전술 목록을 기록한다.
+    같은 host_ip + 같은 PID에서 최근 5분 동안
+    4104와 Sysmon 1/22/3이 이어질 경우 최종 위험도를 높인다.
+
+    가중치:
+    - Event 1  Process Create       +10
+    - Event 22 DNS Query            +15
+    - Event 3  Network Connection   +20
+    - Event 5  Process Terminate    경로만 기록, 점수 가산 없음
+
+    Fileless 4104의 행위 점수를 기준으로 연계 점수를 계산하므로
+    4104(50) + 1(10) + 22(15) + 3(20) = 95점 같은 흐름이 가능하다.
     """
+
+    if not logs:
+        return logs
+
     now_ts = time.time()
 
-    while _recent_tactic_events and now_ts - _recent_tactic_events[0][0] > CORRELATION_WINDOW_SEC:
-        _recent_tactic_events.popleft()
+    while (
+        _recent_behavior_events
+        and now_ts - _recent_behavior_events[0]["time"] > CORRELATION_WINDOW_SEC
+    ):
+        _recent_behavior_events.popleft()
 
     for log in logs:
-        host_ip = log.get("host_ip", "")
-        tactic_id = log.get("tactic_id")
-        tactic_name = log.get("tactic_name")
+        host_ip = str(log.get("host_ip") or "")
+        process_id = safe_int(log.get("process_id"), 0)
+        event_id = safe_int(log.get("event_id"), 0)
 
-        if tactic_id:
-            _recent_tactic_events.append((now_ts, host_ip, tactic_id, tactic_name))
+        try:
+            current_base_score = float(log.get("final_score") or 0)
+        except Exception:
+            current_base_score = 0.0
 
-        matched = {
-            (t_id, t_name)
-            for (_, h_ip, t_id, t_name) in _recent_tactic_events
-            if h_ip == host_ip
-        }
+        related = []
+        if process_id > 0:
+            related = [
+                item
+                for item in _recent_behavior_events
+                if item["host_ip"] == host_ip and item["process_id"] == process_id
+            ]
 
-        if len(matched) >= 2:
-            bonus = (len(matched) - 1) * CORRELATION_BONUS_PER_TACTIC
-            boosted = (log.get("final_score") or 0) + bonus
-            log["final_score"] = round(min(boosted, 100.0), 2)  # 0~100 스케일 상한 고정
-            log["attack_path"] = ", ".join(sorted(name for _, name in matched if name))
+        related_event_ids = {item["event_id"] for item in related}
+        related_event_ids.add(event_id)
+
+        fileless_base_scores = [
+            float(item.get("base_score") or 0)
+            for item in related
+            if item.get("event_id") == 4104
+        ]
+
+        if event_id == 4104:
+            fileless_base_scores.append(current_base_score)
+
+        if 4104 in related_event_ids:
+            base_score = max(
+                [current_base_score] + fileless_base_scores
+            )
+
+            bonus = 0
+            path = ["PowerShell ScriptBlock(4104)"]
+
+            if 1 in related_event_ids:
+                bonus += 10
+                path.append("Process Create(1)")
+
+            if 22 in related_event_ids:
+                bonus += 15
+                path.append("DNS Query(22)")
+
+            if 3 in related_event_ids:
+                bonus += 20
+                path.append("Network Connection(3)")
+
+            if 5 in related_event_ids:
+                path.append("Process Terminate(5)")
+
+            if bonus > 0:
+                log["final_score"] = round(min(base_score + bonus, 100.0), 2)
+                log["attack_path"] = " → ".join(path)
+
+                old_reason = str(log.get("ai_reason") or "").strip()
+                correlation_reason = f"Fileless/Sysmon 행위 연계 +{bonus}점"
+
+                log["ai_reason"] = (
+                    f"{old_reason} | {correlation_reason}"
+                    if old_reason
+                    else correlation_reason
+                )
+
+        _recent_behavior_events.append(
+            {
+                "time": now_ts,
+                "host_ip": host_ip,
+                "process_id": process_id,
+                "event_id": event_id,
+                "base_score": current_base_score,
+                "process_name": str(log.get("process_name") or ""),
+            }
+        )
 
     return logs
 
@@ -430,6 +527,7 @@ def apply_correlation_weight(logs):
 # ============================================================
 # 규칙 기반 위험도 계산
 # ============================================================
+
 
 def calculate_rule_score(log):
     score = 0
@@ -547,14 +645,11 @@ def calculate_rule_score(log):
 
 
 # ============================================================
-# XGBoost 입력 생성
+# XGBoost 입력/예측
 # ============================================================
 
+
 def make_xgboost_input(log):
-    """
-    DB 저장용 로그 전체를 모델에 넣지 않고,
-    XGBoost 모델이 학습 예시에서 사용한 형태에 가까운 필드만 넣습니다.
-    """
     return {
         "event_id": safe_int(log.get("event_id"), 0),
         "process_id": safe_int(log.get("process_id"), 0),
@@ -582,7 +677,6 @@ def add_xgboost_prediction(logs):
             log["ai_risk"] = "Unknown"
             log["final_score"] = 0
             log["ai_reason"] = "Prediction Disabled"
-
         return logs
 
     for log in logs:
@@ -601,6 +695,7 @@ def add_xgboost_prediction(logs):
                 log["ai_risk"] = "Unknown"
                 log["final_score"] = 0
                 log["ai_reason"] = "Prediction Failed"
+
         except Exception as e:
             print("[XGBoost 예측 실패]", e)
             log["ai_score"] = None
@@ -612,60 +707,57 @@ def add_xgboost_prediction(logs):
 
 
 # ============================================================
-# 알람 정책
+# 최종 알람 정책
 # ============================================================
+
 
 def apply_alert_policy(logs):
     """
-    알림 조건:
-    - AI 점수(ai_score)가 90점 이상일 때만 위험 알림 처리
-    - 90점 미만은 알림 소리/대시보드 위험 알림으로 올리지 않음
+    Sysmon은 AI 점수, Fileless는 행위 점수를 final_score의 시작점으로 사용한다.
+    상관관계 가중치까지 반영된 final_score가 90 이상이면 Critical 처리한다.
     """
+
     for log in logs:
-        ai_score = log.get("ai_score")
-
-        is_alert = False
-
         try:
-            if ai_score is not None and float(ai_score) >= 90:
-                is_alert = True
-        except Exception:
-            is_alert = False
+            final_score = log.get("final_score")
+            ai_score = log.get("ai_score")
 
-        if is_alert:
+            if final_score is not None:
+                score = float(final_score)
+            elif ai_score is not None:
+                score = float(ai_score)
+            else:
+                score = 0.0
+        except Exception:
+            score = 0.0
+
+        log["final_score"] = round(score, 2)
+
+        if score >= 90:
             log["ai_risk"] = "Critical"
             log["status"] = "알림"
             log["rule_level"] = "중요"
 
             if not str(log.get("action_desc", "")).startswith("[ALERT]"):
                 log["action_desc"] = (
-                    "[ALERT] AI 점수 90점 이상 | "
+                    f"[ALERT] 최종 위험도 {score:.2f}점 | "
                     + str(log.get("action_desc", ""))
                 )
-        else:
-            # 90점 미만은 위험 알림으로 처리하지 않음
-            if ai_score is not None:
-                try:
-                    score = float(ai_score)
 
-                    if score >= 50:
-                        log["ai_risk"] = "High"
-                        log["status"] = "의심"
-                        log["rule_level"] = "주의"
-                    elif score >= 25:
-                        log["ai_risk"] = "Medium"
-                        log["status"] = "의심"
-                        log["rule_level"] = "주의"
-                    else:
-                        log["ai_risk"] = "Low"
-                        log["status"] = "신규"
-                        log["rule_level"] = "일반"
-                except Exception:
-                    log["status"] = "신규"
-                    log["rule_level"] = "일반"
-            else:
-                log["status"] = "신규"
-                log["rule_level"] = "일반"
+        elif score >= 50:
+            log["ai_risk"] = "High"
+            log["status"] = "의심"
+            log["rule_level"] = "주의"
+
+        elif score >= 25:
+            log["ai_risk"] = "Medium"
+            log["status"] = "의심"
+            log["rule_level"] = "주의"
+
+        else:
+            log["ai_risk"] = "Low"
+            log["status"] = "신규"
+            log["rule_level"] = "일반"
 
     return logs
 
@@ -673,6 +765,7 @@ def apply_alert_policy(logs):
 # ============================================================
 # 알람 출력 및 파일 저장
 # ============================================================
+
 
 def notify_alerts(logs):
     alerts = [log for log in logs if log.get("status") == "알림"]
@@ -700,7 +793,8 @@ def notify_alerts(logs):
                 "risk": log.get("risk"),
                 "ai_score": log.get("ai_score"),
                 "ai_risk": log.get("ai_risk"),
-                "reason": log.get("alert_reason"),
+                "final_score": log.get("final_score"),
+                "reason": log.get("ai_reason") or log.get("alert_reason"),
                 "action_desc": log.get("action_desc"),
             }
 
@@ -708,6 +802,7 @@ def notify_alerts(logs):
             print("Process:", alert_data["process_name"])
             print("Risk:", alert_data["risk"])
             print("AI:", str(alert_data["ai_score"]) + " / " + str(alert_data["ai_risk"]))
+            print("Final Score:", alert_data["final_score"])
             print("Reason:", alert_data["reason"])
             print("Action:", alert_data["action_desc"])
             print("-" * 70)
@@ -721,14 +816,8 @@ def notify_alerts(logs):
 # PowerShell로 Sysmon 이벤트 조회
 # ============================================================
 
-def run_powershell_get_events(
-    last_record_id,
-    max_records=BATCH_SIZE
-):
-    """
-    마지막 처리 RecordId보다 큰 이벤트만 오래된 순서부터 조회한다.
-    """
 
+def run_powershell_get_events(last_record_id, max_records=BATCH_SIZE):
     last_record_id = safe_int(last_record_id)
     max_records = max(1, safe_int(max_records, BATCH_SIZE))
 
@@ -747,14 +836,11 @@ $events = Get-WinEvent `
     -ErrorAction Stop
 
 $result = @()
-
 foreach ($e in $events) {
     $result += [PSCustomObject]@{
         Id          = $e.Id
         RecordId    = $e.RecordId
-        TimeCreated = $e.TimeCreated.ToString(
-            "yyyy-MM-dd HH:mm:ss"
-        )
+        TimeCreated = $e.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
         Message     = $e.Message
     }
 }
@@ -763,23 +849,18 @@ $result | ConvertTo-Json -Depth 5
 """ % (
         last_record_id,
         SYSMON_CHANNEL,
-        max_records
+        max_records,
     )
 
     try:
         result = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                ps_script
-            ],
+            ["powershell", "-NoProfile", "-Command", ps_script],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
         if result.returncode != 0:
@@ -788,8 +869,7 @@ $result | ConvertTo-Json -Depth 5
             return []
 
         output = result.stdout.strip()
-
-        if output == "":
+        if not output:
             return []
 
         data = json.loads(output)
@@ -814,17 +894,12 @@ $result | ConvertTo-Json -Depth 5
 # 최근 Sysmon 로그 수집
 # ============================================================
 
-def collect_recent_logs(
-    last_record_id=None,
-    batch_size=BATCH_SIZE
-    ):
+
+def collect_recent_logs(last_record_id=None, batch_size=BATCH_SIZE):
     if last_record_id is None:
         last_record_id = load_last_record_id()
 
-    events = run_powershell_get_events(
-        last_record_id,
-        batch_size
-    )
+    events = run_powershell_get_events(last_record_id, batch_size)
 
     logs = []
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -843,10 +918,8 @@ def collect_recent_logs(
 
         message = event.get("Message", "")
         gen_time = event.get("TimeCreated", now_str)
-
         image = get_field(message, "Image")
         process_name = get_process_name(image)
-
         parent_image = get_field(message, "ParentImage")
         parent_process_id = get_field(message, "ParentProcessId")
 
@@ -854,12 +927,12 @@ def collect_recent_logs(
             network = get_network_peer(message, host_ip)
         else:
             network = {
-            "direction": "",
-            "remote_ip": "",
-            "source_ip": "",
-            "source_port": "",
-            "destination_ip": "",
-            "destination_port": "",
+                "direction": "",
+                "remote_ip": "",
+                "source_ip": "",
+                "source_port": "",
+                "destination_ip": "",
+                "destination_port": "",
             }
 
         mitre = MITRE_MAP.get(event_id, {})
@@ -881,15 +954,11 @@ def collect_recent_logs(
             "process_path": image,
             "event_id": event_id,
             "command_line": get_field(message, "CommandLine"),
-            # DB의 destination_ip에는 실제 대응 대상인 원격 IP를 저장
             "destination_ip": network.get("remote_ip", ""),
-            # 포트는 접속 대상 포트를 유지
             "destination_port": network.get("destination_port", ""),
             "query_name": get_field(message, "QueryName"),
             "status": "신규",
             "_record_id": record_id,
-
-            # XGBoost 입력용 내부 필드
             "process_id": get_field(message, "ProcessId"),
             "parent_process_id": parent_process_id,
             "image": image,
@@ -897,17 +966,15 @@ def collect_recent_logs(
             "parent_image": parent_image,
             "source_ip": network.get("source_ip", ""),
             "source_port": network.get("source_port", ""),
-            "attack_stage":"",
-            "attack_path":"",
-            "ai_reason":"",
-            "final_score":0,
+            "attack_stage": "",
+            "attack_path": "",
+            "ai_reason": "",
+            "final_score": 0,
         }
 
         log = calculate_rule_score(log)
-
-        log["attack_stage"]=get_attack_stage(log["tactic_name"])
-
-        log["attack_path"]=log["attack_stage"]
+        log["attack_stage"] = get_attack_stage(log["tactic_name"])
+        log["attack_path"] = log["attack_stage"]
 
         logs.append(log)
 
@@ -918,8 +985,9 @@ def collect_recent_logs(
 # FastAPI 전송
 # ============================================================
 
+
 def send_logs_to_fastapi(logs):
-    if len(logs) == 0:
+    if not logs:
         return True
 
     clean_logs = []
@@ -927,12 +995,11 @@ def send_logs_to_fastapi(logs):
     for log in logs:
         copied = dict(log)
 
-        # 내부 상태 필드 제거
         copied.pop("_record_id", None)
         copied.pop("rule_score", None)
         copied.pop("alert_reason", None)
 
-        # XGBoost 입력용 내부 필드 제거
+        # DB 스키마에 없는 상관관계/XGBoost 내부 필드 제거
         copied.pop("process_id", None)
         copied.pop("parent_process_id", None)
         copied.pop("image", None)
@@ -943,14 +1010,12 @@ def send_logs_to_fastapi(logs):
 
         clean_logs.append(copied)
 
-    payload = {
-        "logs": clean_logs
-    }
+    payload = {"logs": clean_logs}
 
     try:
         response = requests.post(API_URL, json=payload, timeout=10)
 
-        if response.status_code == 200 or response.status_code == 201:
+        if response.status_code in (200, 201):
             print("[전송 성공] " + str(len(clean_logs)) + "건")
             return True
 
@@ -964,238 +1029,253 @@ def send_logs_to_fastapi(logs):
 
 
 # ============================================================
-# Fileless 로그 수집 및 통합
+# Fileless 로그 수집 및 EDR 형식 변환
 # ============================================================
 
-def collect_fileless_logs() -> list:
+
+def collect_fileless_logs(last_record_id, batch_size=BATCH_SIZE):
     if not FILELESS_READY or _detect_fileless is None:
-        return []
+        return [], int(last_record_id or 0)
+
     try:
-        threats = _detect_fileless(hours=1)
-    except Exception:
-        return []
+        threats, last_seen_record_id = _detect_fileless(
+            last_record_id=last_record_id,
+            max_records=batch_size,
+            return_meta=True,
+        )
+    except Exception as e:
+        print("[Fileless 탐지 오류]", e)
+        return [], int(last_record_id or 0)
 
     logs = []
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     host_ip = get_local_ip()
     os_name = platform.platform()
-    risk_map = {"H": "High", "M": "Medium", "L": "Low"}
 
-    for t in threats:
-        risk = risk_map.get(t.get("risk_level", "M"), "Medium")
+    risk_map = {
+        "H": "High",
+        "M": "Medium",
+        "L": "Low",
+    }
+
+    for threat in threats:
+        risk = risk_map.get(threat.get("risk_level", "M"), "Medium")
+
+        try:
+            behavior_score = round(float(threat.get("risk_score", 0)) * 100, 2)
+        except Exception:
+            behavior_score = 0.0
+
+        keyword_names = []
+        for item in threat.get("keywords_detected", []):
+            if isinstance(item, dict):
+                keyword = str(item.get("keyword", "")).strip()
+                if keyword:
+                    keyword_names.append(keyword)
+
+        obfuscation_flags = [
+            str(value)
+            for value in threat.get("obfuscation_flags", [])
+            if str(value).strip()
+        ]
+
+        behavior_categories = [
+            str(value)
+            for value in threat.get("behavior_categories", [])
+            if str(value).strip()
+        ]
+
+        reason_parts = keyword_names + obfuscation_flags + behavior_categories
+        reason_text = ", ".join(dict.fromkeys(reason_parts))
+
         log = {
             "recv_time": now_str,
-            "gen_time": str(t.get("timestamp", now_str)),
+            "gen_time": str(threat.get("timestamp") or now_str),
             "host_ip": host_ip,
             "os_name": os_name,
-            "rule_level": "중요" if risk == "High" else "주의",
+            "rule_level": "주의",
             "risk": risk,
             "detect_type": "Fileless 공격",
-            "tactic_id": "TA0005",
-            "tactic_name": "Defense Evasion",
+            "tactic_id": "TA0002",
+            "tactic_name": "Execution",
             "technique_id": "T1059.001",
             "technique_name": "PowerShell",
-            "action_desc": t.get("description", "Fileless PowerShell 탐지"),
+            "action_desc": (
+                "[ID:4104] PowerShell Fileless 의심 행위"
+                + (f" | {reason_text[:500]}" if reason_text else "")
+            ),
             "process_name": "powershell.exe",
-            "event_id": t.get("event_id", 4104),
-            "command_line": t.get("command_snippet", ""),
+            "process_path": "powershell.exe",
+            "event_id": 4104,
+            "command_line": str(threat.get("command_snippet", "")),
             "destination_ip": "",
             "destination_port": "",
             "query_name": "",
-            "status": "알림" if risk == "High" else "의심",
-            "_record_id": 0,
-            "process_id": "",
-            "parent_process_id": "",
-            "image": "",
+            "status": "의심",
+            "_record_id": safe_int(threat.get("record_id"), 0),
+            "process_id": safe_int(threat.get("process_id"), 0),
+            "parent_process_id": 0,
+            "image": "powershell.exe",
             "user": "",
             "parent_image": "",
             "source_ip": "",
             "source_port": "",
+            # 4104는 기존 XGBoost 학습 Event ID가 아니므로 모델 예측하지 않는다.
             "ai_score": None,
             "ai_risk": "Unknown",
-            "attack_stage": "Defense Evasion",
-            "attack_path": "PowerShell Fileless Attack",
-            "ai_reason": "",
-            "final_score": 0,
+            "attack_stage": "실행/방어 우회",
+            "attack_path": "PowerShell ScriptBlock(4104)",
+            "ai_reason": (
+                "Fileless Behavior Detection"
+                + (f" | {reason_text[:600]}" if reason_text else "")
+            ),
+            "final_score": behavior_score,
         }
+
         logs.append(log)
 
-    return logs
-
-
-def collect_all_logs() -> list:
-    """Sysmon 일반 로그 + Fileless 탐지 로그 통합 수집"""
-    logs = collect_recent_logs()
-    logs += collect_fileless_logs()
-    return logs
+    return logs, int(last_seen_record_id or last_record_id or 0)
 
 
 # ============================================================
 # 메인 루프
 # ============================================================
 
+
 def main():
     print("=" * 60)
-    print("Sysmon 실시간 로그 수집기를 시작합니다.")
-    print(f"수집 대상 Event ID: {TARGET_EVENT_IDS}")
+    print("Sysmon + PowerShell Fileless 실시간 로그 수집기를 시작합니다.")
+    print(f"Sysmon 수집 대상 Event ID: {TARGET_EVENT_IDS}")
+    print("PowerShell 수집 대상 Event ID: 4104")
     print(f"전송 주소: {API_URL}")
     print(f"수집 주기: {POLL_INTERVAL}초")
     print(f"한 번에 조회할 이벤트 수: {BATCH_SIZE}개")
     print("=" * 60)
 
-    # 이전에 정상적으로 처리한 마지막 Sysmon RecordId 불러오기
     last_record_id = load_last_record_id()
+    last_fileless_record_id = initialize_fileless_record_id()
 
-    print(f"[수집 시작 위치] 마지막 RecordId: {last_record_id}")
+    print(f"[Sysmon 시작 위치] 마지막 RecordId: {last_record_id}")
+    print(f"[Fileless 시작 위치] 마지막 RecordId: {last_fileless_record_id}")
 
     while True:
         try:
-            processed_count = 0
+            # ----------------------------------------------------
+            # 1. Sysmon 1/3/5/22: 매 주기 최대 BATCH_SIZE개 처리
+            # ----------------------------------------------------
+            sysmon_logs = collect_recent_logs(last_record_id, BATCH_SIZE)
 
-            # 미처리 이벤트가 500개를 넘는 경우
-            # 여러 번 반복해서 모두 따라잡는다.
-            while True:
-                logs = collect_recent_logs(
-                    last_record_id,
-                    BATCH_SIZE
-                )
+            sysmon_logs = [
+                log
+                for log in sysmon_logs
+                if safe_int(log.get("_record_id"), 0) > last_record_id
+            ]
 
-                # 마지막 처리 RecordId보다 큰 이벤트만 남긴다.
-                logs = [
-                    log
-                    for log in logs
-                    if safe_int(log.get("_record_id")) > last_record_id
-                ]
+            sysmon_logs.sort(
+                key=lambda log: safe_int(log.get("_record_id"), 0)
+            )
 
-                # 오래된 이벤트부터 처리한다.
-                logs.sort(
-                    key=lambda log: safe_int(
-                        log.get("_record_id")
-                    )
-                )
-
-                if not logs:
-                    if processed_count == 0:
-                        print("새로운 Sysmon 로그가 없습니다.")
-
-                    break
-
-                # 이번 묶음에서 실제로 읽은 마지막 RecordId
+            if sysmon_logs:
                 batch_last_record_id = max(
-                    safe_int(log.get("_record_id"))
-                    for log in logs
+                    safe_int(log.get("_record_id"), 0)
+                    for log in sysmon_logs
                 )
 
                 upload_logs = []
                 excluded_count = 0
 
-                for log in logs:
-                    # EDR 에이전트가 백엔드 :8000으로 보내는
-                    # 자체 네트워크 통신은 DB 저장 대상에서 제외한다.
+                for log in sysmon_logs:
                     if is_agent_backend_log(log):
                         excluded_count += 1
                         continue
-
                     upload_logs.append(log)
 
-                if excluded_count > 0:
-                    print(
-                        f"[자체 통신 제외] "
-                        f"{excluded_count}건을 제외했습니다."
-                    )
+                if excluded_count:
+                    print(f"[자체 통신 제외] {excluded_count}건")
 
-                # 실제로 전송할 로그가 있는 경우
+                sysmon_success = True
+
                 if upload_logs:
-                    # XGBoost AI 위험도 분석
-                    upload_logs = add_xgboost_prediction(
-                        upload_logs
+                    upload_logs = add_xgboost_prediction(upload_logs)
+                    upload_logs = apply_correlation_weight(upload_logs)
+                    upload_logs = apply_alert_policy(upload_logs)
+                    sysmon_success = send_logs_to_fastapi(upload_logs)
+
+                    if sysmon_success:
+                        notify_alerts(upload_logs)
+
+                if sysmon_success:
+                    last_record_id = batch_last_record_id
+                    save_last_record_id(last_record_id)
+
+                    print(
+                        f"[Sysmon 처리 완료] 조회 {len(sysmon_logs)}건 / "
+                        f"전송 {len(upload_logs)}건 / "
+                        f"마지막 RecordId {last_record_id}"
                     )
 
-                    # 상관관계 가중치 적용 (final_score/attack_path만 갱신,
-                    # 알림 임계치에는 아직 미반영 - 1단계)
-                    upload_logs = apply_correlation_weight(
-                        upload_logs
-                    )
-
-                    # Critical 및 90점 이상 정책 적용
-                    upload_logs = apply_alert_policy(
-                        upload_logs
-                    )
-
-                    # FastAPI 서버로 전송
-                    send_result = send_logs_to_fastapi(
-                        upload_logs
-                    )
-
-                    # send_logs_to_fastapi()가 False를 반환한 경우
-                    if send_result is False:
+                    for log in upload_logs:
                         print(
-                            "[전송 실패] RecordId를 갱신하지 않습니다."
+                            "[수집/전송] "
+                            f"RecordId={log.get('_record_id')} | "
+                            f"EventID={log.get('event_id')} | "
+                            f"Process={log.get('process_name')} | "
+                            f"Destination={log.get('destination_ip')}:{log.get('destination_port')} | "
+                            f"AI={log.get('ai_score')} / {log.get('ai_risk')} | "
+                            f"Final={log.get('final_score')}"
                         )
-                        print(
-                            "다음 수집 주기에 같은 로그를 다시 시도합니다."
-                        )
-                        break
-
-                    # 전송 성공 후 알림 실행
-                    notify_alerts(upload_logs)
-
-                # 자체 통신 로그만 존재한 경우에는
-                # 백엔드 전송 없이 정상 처리된 것으로 본다.
                 else:
-                    send_result = True
+                    print("[Sysmon 전송 실패] RecordId를 갱신하지 않습니다.")
 
-                # 여기까지 왔다면 이번 묶음이 정상 처리된 것이다.
-                # DB에 전송하지 않은 자체 통신 로그의 RecordId도
-                # 처리 완료 상태에 포함한다.
-                last_record_id = batch_last_record_id
-                save_last_record_id(last_record_id)
+            # ----------------------------------------------------
+            # 2. Fileless 4104: Sysmon backlog와 무관하게 매 주기 확인
+            # ----------------------------------------------------
+            fileless_logs, fileless_last_seen = collect_fileless_logs(
+                last_fileless_record_id,
+                BATCH_SIZE,
+            )
 
-                processed_count += len(logs)
+            if fileless_last_seen > last_fileless_record_id:
+                if fileless_logs:
+                    fileless_logs = apply_correlation_weight(fileless_logs)
+                    fileless_logs = apply_alert_policy(fileless_logs)
 
-                print(
-                    f"[처리 완료] 조회 {len(logs)}건 / "
-                    f"전송 {len(upload_logs)}건 / "
-                    f"마지막 RecordId {last_record_id}"
-                )
+                    fileless_success = send_logs_to_fastapi(fileless_logs)
 
-                for log in upload_logs:
-                    record_id = log.get("_record_id")
-                    event_id = log.get("event_id")
-                    process_name = log.get("process_name")
-                    destination_ip = log.get("destination_ip")
-                    destination_port = log.get(
-                        "destination_port"
-                    )
-                    ai_score = log.get(
-                        "ai_score",
-                        log.get("final_score")
-                    )
-                    ai_risk = log.get("ai_risk")
+                    if fileless_success:
+                        notify_alerts(fileless_logs)
+                        last_fileless_record_id = fileless_last_seen
+                        save_last_fileless_record_id(last_fileless_record_id)
 
+                        print(
+                            f"[Fileless 탐지/처리 완료] {len(fileless_logs)}건 | "
+                            f"마지막 4104 RecordId {last_fileless_record_id}"
+                        )
+
+                        for log in fileless_logs:
+                            print(
+                                "[Fileless] "
+                                f"RecordId={log.get('_record_id')} | "
+                                f"PID={log.get('process_id')} | "
+                                f"Final={log.get('final_score')} | "
+                                f"Risk={log.get('ai_risk')} | "
+                                f"Path={log.get('attack_path')}"
+                            )
+                    else:
+                        print(
+                            "[Fileless 전송 실패] "
+                            "4104 RecordId를 갱신하지 않아 다음 주기에 재시도합니다."
+                        )
+
+                else:
+                    # 새 4104가 있었지만 위험 행위로 판정되지 않은 경우에도
+                    # 확인한 위치까지 상태 파일을 갱신하여 중복 분석을 막는다.
+                    last_fileless_record_id = fileless_last_seen
+                    save_last_fileless_record_id(last_fileless_record_id)
                     print(
-                        "[수집/전송] "
-                        f"RecordId={record_id} | "
-                        f"EventID={event_id} | "
-                        f"Process={process_name} | "
-                        f"Destination="
-                        f"{destination_ip}:{destination_port} | "
-                        f"AI={ai_score} / {ai_risk}"
+                        "[Fileless 정상 4104 처리] "
+                        f"마지막 RecordId {last_fileless_record_id}"
                     )
-
-                # BATCH_SIZE만큼 꽉 채워 조회됐다면
-                # 아직 뒤에 이벤트가 더 있을 수 있으므로
-                # 쉬지 않고 바로 다음 묶음을 조회한다.
-                if len(logs) >= BATCH_SIZE:
-                    print(
-                        "[추가 조회] 아직 미처리 이벤트가 "
-                        "남아 있을 수 있습니다."
-                    )
-                    continue
-
-                # 조회된 이벤트가 BATCH_SIZE보다 적으면
-                # 현재까지 밀린 이벤트를 모두 처리한 것으로 본다.
-                break
 
         except KeyboardInterrupt:
             print("\n수집기를 종료합니다.")
