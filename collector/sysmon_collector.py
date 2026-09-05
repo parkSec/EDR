@@ -296,19 +296,44 @@ def safe_int(value, default=0):
     except Exception:
         return default
 
+def normalize_ip(value):
+    """
+    IPv4/IPv6 주소를 비교하기 좋은 표준 형태로 변환한다.
+    예:
+    0:0:0:0:0:0:0:1 -> ::1
+    """
+    value = str(value or "").strip()
+
+    if not value:
+        return ""
+
+    if value.lower() == "localhost":
+        return "localhost"
+
+    try:
+        return ipaddress.ip_address(value).compressed
+    except ValueError:
+        return value.lower()
+
 
 def is_agent_backend_log(log):
     """현재 EDR 수집기가 FastAPI :8000으로 보내는 자체 Event ID 3 로그를 제외한다."""
 
     event_id = safe_int(log.get("event_id"))
     process_id = safe_int(log.get("process_id"))
-    destination_ip = str(log.get("destination_ip") or "").strip()
-    destination_port = safe_int(log.get("destination_port"))
+
+    destination_ip = normalize_ip(
+        log.get("destination_ip")
+    )
+
+    destination_port = safe_int(
+        log.get("destination_port")
+    )
 
     backend_addresses = {
-        API_HOST,
-        "127.0.0.1",
-        "::1",
+        normalize_ip(API_HOST),
+        normalize_ip("127.0.0.1"),
+        normalize_ip("::1"),
         "localhost",
     }
 

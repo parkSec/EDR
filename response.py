@@ -43,24 +43,55 @@ def kill_process(process_path):
 
 
 def block_process_network(process_path):
+
     rule_name = f"BLOCK_PROCESS_{process_path.split('\\')[-1]}"
 
     for direction in ["out", "in"]:
+
         cmd = [
-            "netsh", "advfirewall", "firewall", "add", "rule",
+            "netsh",
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
             f"name={rule_name}",
             f"dir={direction}",
             "action=block",
             f"program={process_path}",
             "enable=yes"
         ]
-        result = subprocess.run(
-            cmd, shell=False, capture_output=True, text=True,
-            encoding="utf-8", errors="ignore",
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
 
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=5,
+            )
+
+            if result.returncode != 0:
+                print(
+                    f"[프로세스 차단 실패] "
+                    f"{process_path}, 방향={direction}"
+                )
+                return False
+
+        except subprocess.TimeoutExpired:
+            print(
+                f"[프로세스 차단 시간 초과] "
+                f"{process_path}, 방향={direction}"
+            )
+            return False
+
+        except Exception as e:
+            print(
+                f"[프로세스 차단 오류] "
+                f"{process_path}, 오류={e}"
+            )
             return False
 
     return True
@@ -69,6 +100,7 @@ def block_process_network(process_path):
 def block_ip(ip_address):
     """
     원격 IP의 인바운드/아웃바운드 통신을 모두 차단한다.
+    로컬호스트 주소는 차단하지 않는다.
     """
 
     if not ip_address:
@@ -77,10 +109,18 @@ def block_ip(ip_address):
     ip_address = str(ip_address).strip()
 
     try:
-        ipaddress.ip_address(ip_address)
+        ip_obj = ipaddress.ip_address(ip_address)
     except ValueError:
         print(f"[IP 차단 실패] 잘못된 IP 주소: {ip_address}")
         return False
+
+    # localhost / loopback 주소는 절대로 차단하지 않음
+    if ip_obj.is_loopback:
+        print(f"[IP 차단 제외] 로컬호스트 주소: {ip_address}")
+        return False
+
+    # IPv6 주소 표준화
+    ip_address = ip_obj.compressed
 
     safe_rule_ip = ip_address.replace(":", "_")
 
@@ -92,56 +132,76 @@ def block_ip(ip_address):
     all_success = True
 
     for rule_name, direction in rules:
-        # 같은 이름의 기존 규칙 제거
-        subprocess.run(
-            [
+        try:
+            # 같은 이름의 기존 규칙 제거
+            subprocess.run(
+                [
+                    "netsh",
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    f"name={rule_name}",
+                ],
+                shell=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=5,
+            )
+
+            cmd = [
                 "netsh",
                 "advfirewall",
                 "firewall",
-                "delete",
+                "add",
                 "rule",
                 f"name={rule_name}",
-            ],
-            shell=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
+                f"dir={direction}",
+                "action=block",
+                f"remoteip={ip_address}",
+                "enable=yes",
+                "profile=any",
+            ]
 
-        cmd = [
-            "netsh",
-            "advfirewall",
-            "firewall",
-            "add",
-            "rule",
-            f"name={rule_name}",
-            f"dir={direction}",
-            "action=block",
-            f"remoteip={ip_address}",
-            "enable=yes",
-            "profile=any",
-        ]
+            result = subprocess.run(
+                cmd,
+                shell=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=5,
+            )
 
-        result = subprocess.run(
-            cmd,
-            shell=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
+            if result.returncode != 0:
+                all_success = False
+                print(
+                    f"[IP 차단 실패] IP={ip_address}, "
+                    f"방향={direction}, 오류={result.stderr}"
+                )
+            else:
+                print(
+                    f"[IP 차단 성공] "
+                    f"IP={ip_address}, 방향={direction}"
+                )
 
-        if result.returncode != 0:
+        except subprocess.TimeoutExpired:
             all_success = False
             print(
-                f"[IP 차단 실패] IP={ip_address}, "
-                f"방향={direction}, 오류={result.stderr}"
+                f"[IP 차단 시간 초과] "
+                f"IP={ip_address}, 방향={direction}"
             )
-        else:
-            print(f"[IP 차단 성공] IP={ip_address}, 방향={direction}")
+
+        except Exception as e:
+            all_success = False
+            print(
+                f"[IP 차단 오류] "
+                f"IP={ip_address}, 방향={direction}, 오류={e}"
+            )
 
     return all_success
 
