@@ -1089,6 +1089,7 @@ with row1_col2:
             realtime_mode = st.toggle(
                 "🔄 실시간 자동 새로고침",
                 value=True,
+                key="realtime_mode",
             )
 
             if realtime_mode:
@@ -1276,6 +1277,13 @@ with st.container(border=True):
 
     rules = [r for r in rules if r.get("규칙 이름", "").startswith(("BLOCK_", "ISOLATE_"))]
 
+    def _strip_direction_suffix(value):
+        """
+        block_ip()가 규칙 이름을 BLOCK_IP_<ip>_IN / BLOCK_IP_<ip>_OUT 형태로
+        만들기 때문에, 실제 IP 값과 비교하려면 끝의 _IN/_OUT을 떼어내야 한다.
+        """
+        return value.removesuffix("_IN").removesuffix("_OUT")
+
     for r in rules:
         rule_name = r.get("규칙 이름", "")
         if rule_name.startswith("BLOCK_PROCESS_"):
@@ -1283,9 +1291,11 @@ with st.container(border=True):
         elif rule_name.startswith("ISOLATE_PROCESS_"):
             r["프로그램/IP"] = rule_name.replace("ISOLATE_PROCESS_", "")
         elif rule_name.startswith("BLOCK_IP_"):
-            r["프로그램/IP"] = rule_name.replace("BLOCK_IP_", "")
+            ip_part = rule_name.replace("BLOCK_IP_", "")
+            r["프로그램/IP"] = _strip_direction_suffix(ip_part)
         elif rule_name.startswith("ISOLATE_IP_"):
-            r["프로그램/IP"] = rule_name.replace("ISOLATE_IP_", "")
+            ip_part = rule_name.replace("ISOLATE_IP_", "")
+            r["프로그램/IP"] = _strip_direction_suffix(ip_part)
 
     seen = set()
     unique_rules = []
@@ -1341,10 +1351,10 @@ with st.container(border=True):
                     capture_output=True, text=True, encoding="utf-8", errors="ignore"
                 )
                 if rule_name.startswith("BLOCK_IP_"):
-                    ip = rule_name.replace("BLOCK_IP_", "")
+                    ip = _strip_direction_suffix(rule_name.replace("BLOCK_IP_", ""))
                     subprocess.run(["route", "delete", ip], capture_output=True, text=True, encoding="utf-8", errors="ignore")
                 elif rule_name.startswith("ISOLATE_IP_"):
-                    ip = rule_name.replace("ISOLATE_IP_", "")
+                    ip = _strip_direction_suffix(rule_name.replace("ISOLATE_IP_", ""))
                     subprocess.run(["route", "delete", ip], capture_output=True, text=True, encoding="utf-8", errors="ignore")
                 st.rerun()
     else:

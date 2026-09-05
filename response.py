@@ -2,8 +2,11 @@ import subprocess
 import psutil
 import time
 import ipaddress
+import os
 from datetime import datetime
 from backend.database import SessionLocal, ResponseResult, SysmonLog, ToggleState
+
+CURRENT_PID = os.getpid()
 
 
 def load_toggle_state():
@@ -21,6 +24,12 @@ def load_toggle_state():
 
 
 def kill_process(process_path):
+    """
+    이름이 일치하는 프로세스를 종료한다.
+    단, 현재 이 자동 대응 모듈(response.py) 자기 자신의 PID는
+    이름이 같더라도(예: python.exe) 절대 종료하지 않는다.
+    """
+
     process_name = get_process_name(process_path).lower()
 
     if not process_name:
@@ -28,13 +37,20 @@ def kill_process(process_path):
 
     killed = False
 
-    for proc in psutil.process_iter(["name"]):
+    for proc in psutil.process_iter(["pid", "name"]):
         try:
+            pid = proc.info.get("pid")
+
+            # 자기 자신은 절대 종료하지 않음
+            if pid == CURRENT_PID:
+                continue
+
             current_name = str(proc.info.get("name") or "").lower()
 
             if current_name == process_name:
                 proc.kill()
                 killed = True
+                print(f"[프로세스 종료] {process_name} (PID={pid})")
 
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
@@ -44,7 +60,7 @@ def kill_process(process_path):
 
 def block_process_network(process_path):
 
-    rule_name = f"BLOCK_PROCESS_{process_path.split('\\')[-1]}"
+    rule_name = f"BLOCK_PROCESS_{process_path.split(chr(92))[-1]}"
 
     for direction in ["out", "in"]:
 
@@ -212,23 +228,35 @@ def isolate_ip(ip_address):
         "mask", "255.255.255.255",
         "0.0.0.0"
     ]
-    result = subprocess.run(
-        cmd, shell=False, capture_output=True, text=True,
-        encoding="utf-8", errors="ignore",
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
+    try:
+        result = subprocess.run(
+            cmd, shell=False, capture_output=True, text=True,
+            encoding="utf-8", errors="ignore",
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"[IP 격리 시간 초과] {ip_address}")
+        return False
+    except Exception as e:
+        print(f"[IP 격리 오류] {ip_address}, 오류={e}")
+        return False
+
     return result.returncode == 0
 
 
 def get_process_name(process_path):
     if process_path:
-        return process_path.split("\\")[-1]
+        return process_path.split(chr(92))[-1]
     return ""
 
 def is_blockable_process_path(process_path):
     """
     실제 실행 파일 경로인 경우에만 프로세스 차단을 수행한다.
     System, svchost.exe 같은 핵심 프로세스는 자동 종료하지 않는다.
+    또한 현재 이 모듈(response.py)이 실행 중인 파이썬 실행 파일도
+    이름 기준으로는 판별이 안 되므로, kill_process 단계에서
+    자기 자신 PID를 별도로 제외한다.
     """
 
     if not process_path:
@@ -252,7 +280,7 @@ def is_blockable_process_path(process_path):
     if process_name in protected_processes:
         return False
 
-    if "\\" not in process_path:
+    if chr(92) not in process_path:
         return False
 
     if not process_name.endswith(".exe"):
@@ -419,7 +447,9 @@ def load_and_respond(on_time=None):
                 ))
                 processed_set.add(key)
 
-        db.commit()
+                # 한 건 처리할 때마다 바로 커밋해서,
+                # 이후 로그 처리 중 문제가 생겨도 이미 처리된 결과는 남는다.
+                db.commit()
 
     finally:
         db.close()
@@ -427,6 +457,7 @@ def load_and_respond(on_time=None):
 
 def main():
     print("자동 대응 모듈 시작")
+    print(f"[정보] 이 프로세스의 PID: {CURRENT_PID} (자기 자신은 종료 대상에서 제외됨)")
     while True:
         try:
             toggle = load_toggle_state()
