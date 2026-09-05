@@ -1297,12 +1297,14 @@ with st.container(border=True):
             ip_part = rule_name.replace("ISOLATE_IP_", "")
             r["프로그램/IP"] = _strip_direction_suffix(ip_part)
 
+    # IN/OUT처럼 방향만 다르고 프로그램/IP 값이 같은 규칙은 한 줄로 합쳐서 보여준다.
+    # (차단 해제 시에는 아래에서 관련된 규칙 이름을 전부 찾아 함께 삭제한다.)
     seen = set()
     unique_rules = []
     for r in rules:
-        rule_name = r.get("규칙 이름", "")
-        if rule_name not in seen:
-            seen.add(rule_name)
+        dedup_key = r.get("프로그램/IP", "")
+        if dedup_key not in seen:
+            seen.add(dedup_key)
             unique_rules.append(r)
     rules = unique_rules
 
@@ -1343,19 +1345,32 @@ with st.container(border=True):
         selected_rows = selected.selection.rows
         if selected_rows:
             idx = selected_rows[0]
-            rule_name = rules[idx].get("규칙 이름", "")
+            selected_rule = rules[idx]
+            rule_name = selected_rule.get("규칙 이름", "")
+            program_or_ip = selected_rule.get("프로그램/IP", "")
 
-            if st.button(f"차단 해제 - {rule_name}"):
-                subprocess.run(
-                    ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"],
-                    capture_output=True, text=True, encoding="utf-8", errors="ignore"
-                )
-                if rule_name.startswith("BLOCK_IP_"):
-                    ip = _strip_direction_suffix(rule_name.replace("BLOCK_IP_", ""))
-                    subprocess.run(["route", "delete", ip], capture_output=True, text=True, encoding="utf-8", errors="ignore")
-                elif rule_name.startswith("ISOLATE_IP_"):
-                    ip = _strip_direction_suffix(rule_name.replace("ISOLATE_IP_", ""))
-                    subprocess.run(["route", "delete", ip], capture_output=True, text=True, encoding="utf-8", errors="ignore")
+            if st.button(f"차단 해제 - {program_or_ip}"):
+                if rule_name.startswith("BLOCK_IP_") or rule_name.startswith("ISOLATE_IP_"):
+                    # IN/OUT 두 방향 규칙을 모두 찾아서 함께 삭제한다.
+                    prefix = "BLOCK_IP_" if rule_name.startswith("BLOCK_IP_") else "ISOLATE_IP_"
+                    for direction in ["IN", "OUT"]:
+                        paired_rule_name = f"{prefix}{program_or_ip}_{direction}"
+                        subprocess.run(
+                            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={paired_rule_name}"],
+                            capture_output=True, text=True, encoding="utf-8", errors="ignore"
+                        )
+
+                    subprocess.run(
+                        ["route", "delete", program_or_ip],
+                        capture_output=True, text=True, encoding="utf-8", errors="ignore"
+                    )
+                else:
+                    # 프로세스 차단 규칙 (BLOCK_PROCESS_ / ISOLATE_PROCESS_)은 방향 접미사가 없으므로 그대로 삭제
+                    subprocess.run(
+                        ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"],
+                        capture_output=True, text=True, encoding="utf-8", errors="ignore"
+                    )
+
                 st.rerun()
     else:
         st.info("차단된 프로세스/IP가 없습니다.")
