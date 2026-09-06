@@ -946,18 +946,18 @@ load_err = update_logs_from_server()
 
 display_df = st.session_state.display_logs.copy()
 
+now = pd.Timestamp.now()
+
+if range_label == "최근 24시간":
+    start = now - pd.Timedelta(days=1)
+elif range_label == "최근 7일":
+    start = now - pd.Timedelta(days=7)
+elif range_label == "최근 14일":
+    start = now - pd.Timedelta(days=14)
+else:
+    start = now - pd.Timedelta(days=30)
+
 if not display_df.empty and "로그 수신 날짜" in display_df.columns:
-    now = pd.Timestamp.now()
-
-    if range_label == "최근 24시간":
-        start = now - pd.Timedelta(days=1)
-    elif range_label == "최근 7일":
-        start = now - pd.Timedelta(days=7)
-    elif range_label == "최근 14일":
-        start = now - pd.Timedelta(days=14)
-    else:
-        start = now - pd.Timedelta(days=30)
-
     display_df = display_df[display_df["로그 수신 날짜"] >= start]
 
 
@@ -1150,14 +1150,14 @@ with st.container(border=True):
     db = SessionLocal()
     try:
         toggle = db.query(ToggleState).first()
-        now = datetime.now()
+        now_dt = datetime.now()
 
         if toggle is None:
             # 처음 실행 시 생성
             toggle = ToggleState(
                 auto_response=1 if auto_response else 0,
-                off_time=None if auto_response else now,
-                on_time=now if auto_response else None
+                off_time=None if auto_response else now_dt,
+                on_time=now_dt if auto_response else None
             )
             db.add(toggle)
         else:
@@ -1166,21 +1166,26 @@ with st.container(border=True):
             if not auto_response and prev_auto_response:
                 # ON → OFF
                 toggle.auto_response = 0
-                toggle.off_time = now
+                toggle.off_time = now_dt
             elif auto_response and not prev_auto_response:
                 # OFF → ON
                 toggle.auto_response = 1
-                toggle.on_time = now
+                toggle.on_time = now_dt
 
         db.commit()
 
     finally:
         db.close()
 
-    # DB에서 결과 불러오기
+    # DB에서 결과 불러오기 (상단에서 선택한 기간(start) 이후 것만)
     db = SessionLocal()
     try:
-        rows = db.query(ResponseResult).order_by(ResponseResult.response_time.asc()).all()
+        rows = (
+            db.query(ResponseResult)
+            .filter(ResponseResult.response_time >= start)
+            .order_by(ResponseResult.response_time.asc())
+            .all()
+        )
         st.session_state.response_results = [{
             "대응 시간": r.response_time.strftime("%Y-%m-%d %H:%M:%S"),
             "위험도": r.risk_level,
@@ -1195,7 +1200,7 @@ with st.container(border=True):
         db.close()
 
     if st.session_state.response_results:
-        display_df = pd.DataFrame([{
+        response_display_df = pd.DataFrame([{
             "대응 시간": r.get("대응 시간", ""),
             "위험도": r.get("위험도", ""),
             "프로세스": r.get("프로세스 이름", ""),
@@ -1205,7 +1210,7 @@ with st.container(border=True):
         } for r in st.session_state.response_results])
 
         selected = st.dataframe(
-            display_df,
+            response_display_df,
             width="stretch",
             hide_index=True,
             height=200,
